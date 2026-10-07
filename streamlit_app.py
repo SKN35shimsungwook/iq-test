@@ -5,6 +5,8 @@ from core.runtime import init_state
 st.set_page_config(page_title="종합사고지수 테스트", page_icon=":material/psychology:", layout="centered")
 
 init_state()
+if st.session_state.session_id and st.query_params.get("s") != st.session_state.session_id:
+    st.query_params["s"] = st.session_state.session_id  # 새로고침해도 이어 풀 수 있게
 
 page = st.navigation(
     {

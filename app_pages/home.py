@@ -3,6 +3,7 @@ import random
 import streamlit as st
 
 from core import db
+from core.components import client_id
 from core.runtime import APP_VERSION, get_engine
 from core.schema import BLUEPRINT, MODE_LABELS, Mode
 
@@ -55,10 +56,15 @@ with st.container(border=True):
     )
     agreed = st.checkbox("위 내용에 동의합니다", value=False, key="consent")
 
+cid = client_id(st.session_state.client_id)
+if cid:
+    st.session_state.client_id = cid  # 같은 브라우저 재응시를 규준에서 빼기 위한 익명 ID
+
 if st.button("검사 시작", type="primary", disabled=not agreed, icon=":material/play_arrow:"):
     seed = random.randrange(2**31)
     st.session_state.mode = mode
     st.session_state.form_seed = seed
+    st.session_state.exam = None
     st.session_state.session_id = db.start_session(
         get_engine(), st.session_state.client_id, mode.value, seed, APP_VERSION
     )

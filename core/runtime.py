@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from core import db
 from core.item_bank import load_items
-from core.schema import Item
+from core.schema import Item, Mode
 
 APP_VERSION = "0.1.0"
 LOCAL_DB = Path(__file__).resolve().parent.parent / "data" / "iq_test.db"
@@ -42,9 +42,31 @@ def get_items() -> list[Item]:
 
 def init_state() -> None:
     ss = st.session_state
-    # TODO(3단계): 브라우저 localStorage 기반 ID로 교체해 새로고침 후에도 재응시를 판별
+    # 시작 화면에서 브라우저 localStorage의 익명 ID로 교체된다 (저장소를 못 쓰면 이 값 유지)
     ss.setdefault("client_id", str(uuid.uuid4()))
+    ss.setdefault("exam", None)        # 응시 진행 상태 (core.exam)
     ss.setdefault("session_id", None)  # 검사 시작 시 DB 세션 ID
     ss.setdefault("mode", None)        # Mode.QUICK | Mode.FULL
     ss.setdefault("form_seed", None)
     ss.setdefault("phase", "intro")    # intro → test → result
+    if ss.session_id is None and "s" in st.query_params:
+        _resume(st.query_params["s"])
+
+
+def _resume(session_id: str) -> None:
+    """URL의 세션 ID로 진행 중이던 검사(또는 끝난 결과)를 되살린다. 새로고침 대비."""
+    row = db.load_session(get_engine(), session_id)
+    if not row or not row["progress"]:
+        st.query_params.pop("s", None)
+        return
+    ss = st.session_state
+    ss.session_id = row["id"]
+    ss.client_id = row["client_id"]
+    ss.mode = Mode(row["mode"])
+    ss.form_seed = row["form_seed"]
+    ss.exam = row["progress"]
+    ss.phase = "result" if row["progress"]["d"] >= len(row["progress"]["domains"]) else "test"
+
+
+def save_progress() -> None:
+    db.save_progress(get_engine(), st.session_state.session_id, st.session_state.exam)

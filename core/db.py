@@ -29,6 +29,7 @@ sessions = sa.Table(
     sa.Column("domain_index", sa.JSON),  # {"gf": 108.2, ...}
     sa.Column("ltr_index", sa.Float),
     sa.Column("percentile", sa.Float),
+    sa.Column("progress", sa.JSON),      # 응시 진행 상태 (새로고침 후 이어 풀기용)
 )
 
 responses = sa.Table(
@@ -110,6 +111,17 @@ def complete_session(
                 percentile=percentile,
             )
         )
+
+
+def save_progress(engine: Engine, session_id: str, progress: dict) -> None:
+    with engine.begin() as conn:
+        conn.execute(sessions.update().where(sessions.c.id == session_id).values(progress=progress))
+
+
+def load_session(engine: Engine, session_id: str) -> dict | None:
+    with engine.connect() as conn:
+        row = conn.execute(sa.select(sessions).where(sessions.c.id == session_id)).first()
+    return dict(row._mapping) if row else None
 
 
 def norm_raw_scores(engine: Engine, mode: str) -> list[dict]:
