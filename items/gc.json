@@ -1,0 +1,28 @@
+[
+  {
+    "id": "gc-01a",
+    "domain": "gc",
+    "slot": "gc-01",
+    "format": "mcq",
+    "subtype": "vocabulary",
+    "difficulty": 1,
+    "prompt": "'어렴풋하다'와 뜻이 가장 가까운 말은?",
+    "choices": ["명료하다", "희미하다", "저속하다", "참담하다"],
+    "answer": 1,
+    "explanation": "'어렴풋하다'는 기억이나 형체가 뚜렷하지 않고 희미하다는 뜻입니다.",
+    "expected_p": 0.85
+  },
+  {
+    "id": "gc-01b",
+    "domain": "gc",
+    "slot": "gc-01",
+    "format": "mcq",
+    "subtype": "vocabulary",
+    "difficulty": 1,
+    "prompt": "'고즈넉하다'와 뜻이 가장 가까운 말은?",
+    "choices": ["소란하다", "화려하다", "고요하다", "무겁다"],
+    "answer": 2,
+    "explanation": "'고즈넉하다'는 고요하고 아늑하다는 뜻입니다.",
+    "expected_p": 0.85
+  }
+]
