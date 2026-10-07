@@ -58,6 +58,16 @@ def _now() -> datetime:
 
 def init_db(engine: Engine) -> None:
     metadata.create_all(engine)
+    if engine.dialect.name == "postgresql":
+        # Supabase는 public 스키마 테이블을 REST API(anon 키)로 노출한다. 정책 없는 RLS를 켜 두면 API로는
+        # 읽고 쓸 수 없고, 테이블 소유자로 직접 접속하는 앱만 접근한다.
+        with engine.begin() as conn:
+            for table in metadata.sorted_tables:
+                conn.execute(sa.text(f'ALTER TABLE "{table.name}" ENABLE ROW LEVEL SECURITY'))
+
+
+def backend(engine: Engine) -> str:
+    return "Postgres" if engine.dialect.name == "postgresql" else "SQLite (로컬 파일)"
 
 
 def start_session(engine: Engine, client_id: str, mode: str, form_seed: int, app_version: str,

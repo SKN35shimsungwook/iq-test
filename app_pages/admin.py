@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from core import analysis as an
+from core import db
 from core.charts import PRIMARY
 from core.runtime import get_engine, get_items
 from core.schema import BLUEPRINT, MODE_LABELS, Mode
@@ -50,6 +51,9 @@ def analyze(responses: pd.DataFrame, mode: str) -> tuple[pd.DataFrame, pd.DataFr
 
 
 st.title("응답 분석")
+storage = db.backend(get_engine())
+st.caption(f"저장소: {storage}" + (" — 배포 환경이라면 재시작 시 데이터가 사라집니다. Secrets에 [connections.sql]을 설정하세요."
+                                  if storage.startswith("SQLite") else ""))
 with st.container(horizontal=True, vertical_alignment="bottom"):
     mode = st.segmented_control("검사 방식", ["all", Mode.QUICK.value, Mode.FULL.value], default="all",
                                 format_func=lambda m: "전체" if m == "all" else MODE_LABELS[Mode(m)])

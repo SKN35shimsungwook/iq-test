@@ -1,4 +1,4 @@
-"""가상 응시 데이터 생성 (로컬 개발·분석 화면 확인용): python scripts/simulate.py [--n 300] [--reset]
+"""가상 응시 데이터 생성 (로컬 개발·분석 화면 확인용): python scripts/simulate.py [--n 300] [--reset] [--url ...]
 
 - 능력 θ ~ N(0, 1)인 가상 응시자가 실제 출제·라우팅 로직(core.exam)으로 검사를 풉니다.
 - 문항의 '참 난이도'를 가정값에서 조금씩 흔들고, 일부 문항은 일부러 아주 쉽게/어렵게 만들어
@@ -31,9 +31,10 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--n", type=int, default=300)
 ap.add_argument("--reset", action="store_true")
 ap.add_argument("--db", default=str(ROOT / "data" / "iq_test.db"))
+ap.add_argument("--url", help="SQLAlchemy DB URL (지정하면 --db 대신 사용, 예: Postgres 점검용)")
 args = ap.parse_args()
 
-engine = sa.create_engine(f"sqlite:///{Path(args.db).as_posix()}")
+engine = sa.create_engine(args.url or f"sqlite:///{Path(args.db).as_posix()}")
 db.init_db(engine)
 with engine.begin() as conn:
     sim_ids = [r.id for r in conn.execute(sa.select(db.sessions.c.id).where(db.sessions.c.app_version == SIM_VERSION))]

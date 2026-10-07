@@ -94,6 +94,7 @@ streamlit run streamlit_app.py
 
 - 기본 저장소는 `data/iq_test.db`(SQLite)입니다.
 - Supabase를 쓰려면 `.streamlit/secrets.toml.example`을 `secrets.toml`로 복사하고 `[connections.sql]`을 채웁니다.
+- DB 연결 점검: `python scripts/check_db.py [DB URL]` · 배포 절차는 [DEPLOY.md](DEPLOY.md)
 
 ## 구조
 
@@ -116,6 +117,9 @@ items/gc.json, gq.json     직접 작성한 언어·수리 문항
 items/gwm.json, gs.json    작업기억·처리속도 (응시 때마다 생성)
 scripts/validate_items.py  문항 검증 (--strict: 동형·문항 풀 수까지)
 scripts/render_review.py   검토용 HTML 생성 → review/items_review.html
+scripts/check_db.py        배포 전 DB 연결·권한 점검
+scripts/simulate.py        가상 응시 데이터 생성 (로컬 분석 확인용)
+core/analysis.py           관리자 분석 (문항 판정·신뢰도·보정)
 ```
 
 ## 문항 작성 규칙
