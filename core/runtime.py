@@ -45,5 +45,6 @@ def init_state() -> None:
     # TODO(3단계): 브라우저 localStorage 기반 ID로 교체해 새로고침 후에도 재응시를 판별
     ss.setdefault("client_id", str(uuid.uuid4()))
     ss.setdefault("session_id", None)  # 검사 시작 시 DB 세션 ID
+    ss.setdefault("mode", None)        # Mode.QUICK | Mode.FULL
     ss.setdefault("form_seed", None)
     ss.setdefault("phase", "intro")    # intro → test → result

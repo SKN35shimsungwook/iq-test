@@ -1,0 +1,10 @@
+[
+  {"id": "gwm-01a", "slot": "gwm-01", "prompt": "숫자가 하나씩 나타납니다. 본 순서 그대로 입력하세요.", "answer": null, "explanation": "문제는 응시할 때마다 새로 정해집니다.", "expected_p": 0.85, "format": "digit_span", "params": {"mode": "forward", "length": 5, "show_ms": 900, "gap_ms": 300}},
+  {"id": "gwm-02a", "slot": "gwm-02", "prompt": "격자의 칸이 하나씩 켜집니다. 켜진 순서대로 칸을 누르세요.", "answer": null, "explanation": "문제는 응시할 때마다 새로 정해집니다.", "expected_p": 0.85, "format": "spatial_span", "params": {"grid": 3, "length": 4, "show_ms": 700, "gap_ms": 250}},
+  {"id": "gwm-03a", "slot": "gwm-03", "prompt": "숫자가 하나씩 나타납니다. 본 순서의 거꾸로 입력하세요.", "answer": null, "explanation": "문제는 응시할 때마다 새로 정해집니다.", "expected_p": 0.85, "format": "digit_span", "params": {"mode": "backward", "length": 4, "show_ms": 900, "gap_ms": 300}},
+  {"id": "gwm-04a", "slot": "gwm-04", "prompt": "숫자가 하나씩 나타납니다. 작은 수부터 큰 수 순서로 정렬해 입력하세요.", "answer": null, "explanation": "문제는 응시할 때마다 새로 정해집니다.", "expected_p": 0.6, "format": "digit_span", "params": {"mode": "sorting", "length": 5, "show_ms": 900, "gap_ms": 300}},
+  {"id": "gwm-05a", "slot": "gwm-05", "prompt": "숫자가 하나씩 나타납니다. 본 순서 그대로 입력하세요.", "answer": null, "explanation": "문제는 응시할 때마다 새로 정해집니다.", "expected_p": 0.6, "format": "digit_span", "params": {"mode": "forward", "length": 7, "show_ms": 900, "gap_ms": 300}},
+  {"id": "gwm-06a", "slot": "gwm-06", "prompt": "숫자가 하나씩 나타납니다. 본 순서의 거꾸로 입력하세요.", "answer": null, "explanation": "문제는 응시할 때마다 새로 정해집니다.", "expected_p": 0.6, "format": "digit_span", "params": {"mode": "backward", "length": 5, "show_ms": 900, "gap_ms": 300}},
+  {"id": "gwm-07a", "slot": "gwm-07", "prompt": "격자의 칸이 하나씩 켜집니다. 켜진 순서대로 칸을 누르세요.", "answer": null, "explanation": "문제는 응시할 때마다 새로 정해집니다.", "expected_p": 0.35, "format": "spatial_span", "params": {"grid": 4, "length": 6, "show_ms": 700, "gap_ms": 250}},
+  {"id": "gwm-08a", "slot": "gwm-08", "prompt": "숫자가 하나씩 나타납니다. 작은 수부터 큰 수 순서로 정렬해 입력하세요.", "answer": null, "explanation": "문제는 응시할 때마다 새로 정해집니다.", "expected_p": 0.35, "format": "digit_span", "params": {"mode": "sorting", "length": 7, "show_ms": 900, "gap_ms": 300}}
+]

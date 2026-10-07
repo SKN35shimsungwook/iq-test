@@ -1,60 +1,106 @@
-"""items/*.json 문항은행 로드·검증·검사지 구성."""
+"""문항은행 로드·검증·검사지 구성.
+
+- items/*.json: 직접 작성한 문항 (generated.json 제외)
+- items/generated.json: 생성기 슬롯 정의. 슬롯마다 forms개의 동형 문항(a, b, c, ...)으로 펼친다.
+"""
 
 from __future__ import annotations
 
 import json
 import random
-from collections import defaultdict
+import string
+import zlib
+from collections import Counter, defaultdict
 from pathlib import Path
 
-from core.schema import TEST_PLAN, Domain, Item
+from core.figures import materialize
+from core.schema import BLUEPRINT, MAX_SAME_TYPE, MIN_DOMAIN_POOL, MIN_FORMS, SLOTS, Domain, Item, ItemFormat, Mode
 
 ITEMS_DIR = Path(__file__).resolve().parent.parent / "items"
+GENERATED = "generated.json"
+
+
+def form_seed(slot: str, index: int) -> int:
+    return zlib.crc32(f"{slot}:{index}".encode())
+
+
+def expand_generated(entries: list[dict]) -> list[Item]:
+    items = []
+    for e in entries:
+        slot = e["slot"]
+        for i in range(e["forms"]):
+            svg = {"generator": e["generator"], "seed": form_seed(slot, i), "form": i,
+                   "pool_seed": zlib.crc32(slot.encode()), **e.get("params", {})}
+            items.append(materialize(Item.from_dict({
+                "id": f"{slot}{string.ascii_lowercase[i]}", "slot": slot, "prompt": e["prompt"],
+                "answer": None, "svg": svg, "expected_p": e["expected_p"],
+            })))
+    return items
 
 
 def load_items(items_dir: Path = ITEMS_DIR) -> list[Item]:
     items: list[Item] = []
     for path in sorted(items_dir.glob("*.json")):
         with path.open(encoding="utf-8") as f:
-            items.extend(Item.from_dict(d) for d in json.load(f))
+            data = json.load(f)
+        if path.name == GENERATED:
+            items.extend(expand_generated(data))
+            continue
+        for d in data:
+            item = Item.from_dict(d)
+            if item.svg and "generator" in item.svg:
+                item = materialize(item)
+            items.append(item)
     return items
 
 
 def validate_bank(items: list[Item]) -> list[str]:
-    """문항은행 전체 검증: 개별 문항 오류 + ID 중복 + 슬롯 수 부족."""
+    """문항은행 전체 검증: 개별 문항 오류 + ID 중복 + 슬롯별 동형 문항 수 부족."""
     errors = [f"[{it.id}] {e}" for it in items for e in it.validate()]
 
-    seen: set[str] = set()
-    for it in items:
-        if it.id in seen:
-            errors.append(f"[{it.id}] 중복 ID")
-        seen.add(it.id)
+    counts = Counter(it.id for it in items)
+    errors += [f"[{i}] 중복 ID" for i, n in counts.items() if n > 1]
 
-    slots = slots_by_domain(items)
-    for domain, spec in TEST_PLAN.items():
-        have = len(slots.get(domain, {}))
-        if have < spec.slots:
-            errors.append(f"[{domain.value}] 슬롯 {have}개 / 필요 {spec.slots}개")
+    by_slot = Counter(it.slot for it in items)
+    mcq_slots = {it.slot for it in items if it.format is ItemFormat.MCQ}
+    for slot_id, slot in SLOTS.items():
+        need = MIN_FORMS if slot_id in mcq_slots or slot_id not in by_slot else 1
+        if by_slot[slot_id] < need:
+            errors.append(f"[{slot_id}] {slot.subtype} 동형 {by_slot[slot_id]}개 / 필요 {need}개")
+
+    pool = Counter(it.domain for it in items if it.format is ItemFormat.MCQ)
+    for domain in {it.domain for it in items if it.format is ItemFormat.MCQ}:
+        if pool[domain] < MIN_DOMAIN_POOL:
+            errors.append(f"[{domain.value}] 문항 풀 {pool[domain]}개 / 필요 {MIN_DOMAIN_POOL}개")
     return errors
 
 
-def slots_by_domain(items: list[Item]) -> dict[Domain, dict[str, list[Item]]]:
-    out: dict[Domain, dict[str, list[Item]]] = defaultdict(lambda: defaultdict(list))
+def validate_blueprint() -> list[str]:
+    """구성표 규칙: 모드별로 한 영역 안에서 같은 유형이 MAX_SAME_TYPE번을 넘지 않는다."""
+    errors = []
+    for domain, spec in BLUEPRINT.items():
+        for mode in Mode:
+            counts = Counter(s.subtype for s in spec.slots_for(mode))
+            errors += [f"[{domain.value}/{mode.value}] {t} {n}회" for t, n in counts.items() if n > MAX_SAME_TYPE]
+    return errors
+
+
+def items_by_slot(items: list[Item]) -> dict[str, list[Item]]:
+    out: dict[str, list[Item]] = defaultdict(list)
     for it in items:
-        out[it.domain][it.slot].append(it)
+        out[it.slot].append(it)
     return out
 
 
-def build_form(items: list[Item], seed: int) -> dict[Domain, list[Item]]:
-    """시드로 슬롯마다 동형 문항 1개를 골라 검사지를 만든다.
+def build_form(items: list[Item], seed: int, mode: Mode = Mode.FULL) -> dict[Domain, list[Item]]:
+    """시드로 슬롯마다 동형 문항 1개를 골라 검사지를 만든다. 순서는 구성표 순서.
 
-    영역 내 순서는 슬롯 ID 순(= 난이도 점진 상승 순으로 작성)으로 고정한다.
-    문항이 부족한 영역은 있는 만큼만 담는다 (개발 중 부분 문항은행 허용).
+    문항이 없는 슬롯은 건너뛴다 (개발 중 부분 문항은행 허용).
     """
     rng = random.Random(seed)
-    slots = slots_by_domain(items)
-    form: dict[Domain, list[Item]] = {}
-    for domain, spec in TEST_PLAN.items():
-        chosen = [rng.choice(slots[domain][s]) for s in sorted(slots.get(domain, {}))]
-        form[domain] = chosen[: spec.slots]
-    return form
+    pool = items_by_slot(items)
+    return {
+        domain: [rng.choice(pool[s.id]) for s in spec.slots_for(mode) if pool.get(s.id)]
+        for domain, spec in BLUEPRINT.items()
+        if spec.slots_for(mode)
+    }

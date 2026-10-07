@@ -1,8 +1,8 @@
 import sqlalchemy as sa
 
 from core import db
-from core.item_bank import build_form, load_items, validate_bank
-from core.schema import Domain, Item, ItemFormat
+from core.item_bank import build_form, load_items, validate_blueprint, validate_bank
+from core.schema import BLUEPRINT, Domain, Item, ItemFormat, Mode
 
 
 def make_item(**kw) -> Item:
@@ -37,16 +37,35 @@ def test_session_roundtrip_and_first_attempt_flag():
     engine = sa.create_engine("sqlite://")
     db.init_db(engine)
 
-    s1 = db.start_session(engine, "client-1", 42, "test")
+    s1 = db.start_session(engine, "client-1", "full", 42, "test")
     db.save_responses(engine, s1, [
         dict(item_id="gf-01a", item_version=1, domain="gf", answer="0", correct=True, score=1, response_ms=1200),
         dict(item_id="gf-02a", item_version=1, domain="gf", answer=None, correct=False, score=0, response_ms=None),
     ])
     db.complete_session(engine, s1, {"gf": 1}, {"gf": 100.0}, 100.0, 50.0)
 
-    s2 = db.start_session(engine, "client-1", 7, "test")  # 같은 브라우저 재응시
+    s2 = db.start_session(engine, "client-1", "full", 7, "test")  # 같은 브라우저 재응시
     db.complete_session(engine, s2, {"gf": 2}, {"gf": 110.0}, 110.0, 75.0)
 
-    assert db.norm_raw_scores(engine) == [{"gf": 1}]
+    assert db.norm_raw_scores(engine, "full") == [{"gf": 1}]
+    assert db.norm_raw_scores(engine, "quick") == []
     rows = db.response_matrix(engine)
     assert {r["item_id"] for r in rows} == {"gf-01a", "gf-02a"}
+
+
+def test_blueprint_respects_type_cap_and_quick_size():
+    assert validate_blueprint() == []
+    for domain, spec in BLUEPRINT.items():
+        quick = spec.slots_for(Mode.QUICK)
+        if domain is Domain.GS:
+            assert quick == ()
+            continue
+        assert len(quick) == 4
+        assert len({s.subtype for s in quick}) == 4  # 빠른 검사는 영역마다 서로 다른 유형
+        assert spec.time_for(Mode.QUICK) or domain is Domain.GWM
+
+
+def test_generated_forms_use_different_rules():
+    items = [it for it in load_items() if it.slot == "gf-01"]
+    assert len(items) >= 6
+    assert len({str(it.params["rules"]) for it in items}) == len(items)

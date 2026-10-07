@@ -19,6 +19,7 @@ sessions = sa.Table(
     metadata,
     sa.Column("id", sa.String(36), primary_key=True),
     sa.Column("client_id", sa.String(36), nullable=False, index=True),  # 익명 브라우저 ID
+    sa.Column("mode", sa.String(8), nullable=False),  # quick | full (규준은 모드별로 따로)
     sa.Column("is_first_attempt", sa.Boolean, nullable=False),
     sa.Column("form_seed", sa.Integer, nullable=False),
     sa.Column("app_version", sa.String(20), nullable=False),
@@ -54,7 +55,7 @@ def init_db(engine: Engine) -> None:
     metadata.create_all(engine)
 
 
-def start_session(engine: Engine, client_id: str, form_seed: int, app_version: str) -> str:
+def start_session(engine: Engine, client_id: str, mode: str, form_seed: int, app_version: str) -> str:
     session_id = str(uuid.uuid4())
     with engine.begin() as conn:
         # 같은 브라우저에서 완료한 세션이 이미 있으면 규준 계산에서 제외할 재응시로 표시
@@ -67,6 +68,7 @@ def start_session(engine: Engine, client_id: str, form_seed: int, app_version: s
             sessions.insert().values(
                 id=session_id,
                 client_id=client_id,
+                mode=mode,
                 is_first_attempt=prior == 0,
                 form_seed=form_seed,
                 app_version=app_version,
@@ -110,12 +112,14 @@ def complete_session(
         )
 
 
-def norm_raw_scores(engine: Engine) -> list[dict]:
-    """규준 계산용: 완료된 첫 응시 세션들의 영역별 원점수."""
+def norm_raw_scores(engine: Engine, mode: str) -> list[dict]:
+    """규준 계산용: 해당 모드에서 완료된 첫 응시 세션들의 영역별 원점수."""
     with engine.connect() as conn:
         rows = conn.execute(
             sa.select(sessions.c.raw_scores).where(
-                sessions.c.completed_at.is_not(None), sessions.c.is_first_attempt.is_(True)
+                sessions.c.mode == mode,
+                sessions.c.completed_at.is_not(None),
+                sessions.c.is_first_attempt.is_(True),
             )
         ).all()
     return [r.raw_scores for r in rows]

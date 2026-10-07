@@ -4,6 +4,7 @@ import streamlit as st
 
 from core import db
 from core.runtime import get_engine
+from core.schema import MODE_LABELS, Mode
 
 
 def _admin_password() -> str | None:
@@ -29,11 +30,11 @@ if not st.session_state.get("admin_ok"):
     st.stop()
 
 engine = get_engine()
-norms = db.norm_raw_scores(engine)
 responses = db.response_matrix(engine)
 
 with st.container(horizontal=True):
-    st.metric("완료한 첫 응시", len(norms), border=True)
+    for mode in Mode:
+        st.metric(f"{MODE_LABELS[mode]} 첫 응시", len(db.norm_raw_scores(engine, mode.value)), border=True)
     st.metric("저장된 응답", len(responses), border=True)
 
 # TODO(5단계): 점수 분포, 문항별 정답률·변별도, Cronbach α, 평균 응답시간
