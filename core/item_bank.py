@@ -11,6 +11,7 @@ import random
 import string
 import zlib
 from collections import Counter, defaultdict
+from dataclasses import replace
 from pathlib import Path
 
 from core.figures import materialize
@@ -38,19 +39,42 @@ def expand_generated(entries: list[dict]) -> list[Item]:
     return items
 
 
+def balance_answer_positions(items: list[Item]) -> list[Item]:
+    """정답 위치가 한쪽으로 몰리면 찍기가 유리해진다 (직접 작성 문항은 작성자 습관으로 특히 그렇다).
+
+    슬롯마다 동형 문항이 정답 위치 A~D를 돌아가며 갖도록 정답 보기만 옮긴다 (오답 순서는 유지).
+    """
+    out, by_slot = [], defaultdict(list)
+    for it in items:
+        by_slot[it.slot].append(it)
+    for slot, group in by_slot.items():
+        order = random.Random(zlib.crc32(slot.encode())).sample(range(4), 4)
+        for k, it in enumerate(sorted(group, key=lambda x: x.id)):
+            if it.format is not ItemFormat.MCQ:
+                out.append(it)
+                continue
+            target = order[k % 4]
+            rest = [c for i, c in enumerate(it.choices) if i != it.answer]
+            choices = rest[:target] + [it.choices[it.answer]] + rest[target:]
+            out.append(replace(it, choices=choices, answer=target))
+    return out
+
+
 def load_items(items_dir: Path = ITEMS_DIR) -> list[Item]:
     items: list[Item] = []
     for path in sorted(items_dir.glob("*.json")):
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
         if path.name == GENERATED:
-            items.extend(expand_generated(data))
+            items.extend(balance_answer_positions(expand_generated(data)))
             continue
+        written = []
         for d in data:
             item = Item.from_dict(d)
             if item.svg and "generator" in item.svg:
                 item = materialize(item)
-            items.append(item)
+            written.append(item)
+        items.extend(balance_answer_positions(written))
     return items
 
 

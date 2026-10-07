@@ -26,7 +26,9 @@ sessions = sa.Table(
     sa.Column("started_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("completed_at", sa.DateTime(timezone=True)),
     sa.Column("raw_scores", sa.JSON),    # {"gf": 7, ...}
-    sa.Column("domain_index", sa.JSON),  # {"gf": 108.2, ...}
+    sa.Column("domain_index", sa.JSON),  # {"gf": 108.2, ...} 가정 규준 기준 영역 지수
+    sa.Column("thetas", sa.JSON),        # {"total": 0.53, "gf": 0.41, ...} 능력 추정치 (실제 규준 계산용)
+    sa.Column("focus_lost", sa.Integer), # 검사 중 탭·창 이탈 횟수
     sa.Column("ltr_index", sa.Float),
     sa.Column("percentile", sa.Float),
     sa.Column("progress", sa.JSON),      # 응시 진행 상태 (새로고침 후 이어 풀기용)
@@ -85,6 +87,9 @@ def save_responses(engine: Engine, session_id: str, rows: list[dict]) -> None:
         return
     now = _now()
     with engine.begin() as conn:
+        # 저장 도중 끊겨 같은 영역을 다시 저장해도 응답이 두 번 쌓이지 않게 한다
+        conn.execute(responses.delete().where(
+            responses.c.session_id == session_id, responses.c.item_id.in_([r["item_id"] for r in rows])))
         conn.execute(
             responses.insert(),
             [{**r, "session_id": session_id, "answered_at": r.get("answered_at", now)} for r in rows],
@@ -98,17 +103,22 @@ def complete_session(
     domain_index: dict,
     ltr_index: float,
     percentile: float,
+    thetas: dict | None = None,
+    focus_lost: int = 0,
 ) -> None:
+    """결과를 기록하고 완료 처리한다. 이미 완료된 세션은 건드리지 않는다 (결과 화면 새로고침 대비)."""
     with engine.begin() as conn:
         conn.execute(
             sessions.update()
-            .where(sessions.c.id == session_id)
+            .where(sessions.c.id == session_id, sessions.c.completed_at.is_(None))
             .values(
                 completed_at=_now(),
                 raw_scores=raw_scores,
                 domain_index=domain_index,
                 ltr_index=ltr_index,
                 percentile=percentile,
+                thetas=thetas,
+                focus_lost=focus_lost,
             )
         )
 
@@ -135,6 +145,20 @@ def norm_raw_scores(engine: Engine, mode: str) -> list[dict]:
             )
         ).all()
     return [r.raw_scores for r in rows]
+
+
+def norm_thetas(engine: Engine, mode: str, exclude: str | None = None) -> list[dict]:
+    """실제 규준 계산용: 해당 모드에서 완료된 첫 응시 세션들의 능력 추정치."""
+    q = sa.select(sessions.c.thetas).where(
+        sessions.c.mode == mode,
+        sessions.c.completed_at.is_not(None),
+        sessions.c.is_first_attempt.is_(True),
+        sessions.c.thetas.is_not(None),
+    )
+    if exclude:
+        q = q.where(sessions.c.id != exclude)
+    with engine.connect() as conn:
+        return [r.thetas for r in conn.execute(q)]
 
 
 def response_matrix(engine: Engine, first_attempt_only: bool = True) -> list[dict]:

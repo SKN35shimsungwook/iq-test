@@ -77,7 +77,7 @@ _COUNTDOWN = st.components.v2.component(
 export default function (component) {
   const { data, parentElement, setTriggerValue, setStateValue } = component
   const s = parentElement.__cd || (parentElement.__cd = { blurs: data.blurs || 0 })
-  if (s.token !== data.token) { s.token = data.token; s.fired = false }
+  if (s.token !== data.token) { s.token = data.token; s.firedAt = 0 }
   s.endAt = performance.now() + data.remaining_ms
   s.total = data.total_ms
   const box = parentElement.querySelector(".cd")
@@ -87,7 +87,10 @@ export default function (component) {
     box.querySelector(".t").textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`
     box.querySelector(".fill").style.width = `${(left / s.total) * 100}%`
     box.classList.toggle("low", left < 30000)
-    if (left <= 0 && !s.fired) { s.fired = true; setTriggerValue("expired", s.token) }
+    if (left <= 0 && (!s.firedAt || performance.now() - s.firedAt > 3000)) {
+      s.firedAt = performance.now()
+      setTriggerValue("expired", s.token)
+    }
   }
   tick()
   if (!s.timer) s.timer = setInterval(tick, 250)
@@ -190,7 +193,7 @@ _DIGIT_SPAN = st.components.v2.component(
 """,
     js="""
 export default function (component) {
-  const { data, parentElement, setTriggerValue } = component
+  const { data, parentElement, setTriggerValue, setStateValue } = component
   const root = parentElement.querySelector(".center")
   if (root.dataset.token === data.token) return
   root.dataset.token = data.token
@@ -203,6 +206,7 @@ export default function (component) {
     root.querySelector("button").onclick = show
   }
   const show = async () => {
+    setStateValue("started", true)
     root.innerHTML = `<div class="hint">집중하세요</div><div class="stage"></div>`
     const stage = root.querySelector(".stage")
     await sleep(700)
@@ -260,6 +264,7 @@ export default function (component) {
 
 
 def digit_span(token: str, digits: str, mode: str, show_ms: int, gap_ms: int):
+    """(완료 trigger, 제시 시작 여부). 제시가 시작된 문항을 새로고침하면 다시 볼 수 없게 하는 데 쓴다."""
     instruction = {"forward": "숫자가 하나씩 나타납니다. 본 순서 <b>그대로</b> 기억하세요.",
                    "backward": "숫자가 하나씩 나타납니다. 나중에 <b>거꾸로</b> 입력합니다.",
                    "sorting": "숫자가 하나씩 나타납니다. 나중에 <b>작은 수부터</b> 입력합니다."}[mode]
@@ -268,8 +273,8 @@ def digit_span(token: str, digits: str, mode: str, show_ms: int, gap_ms: int):
     r = _DIGIT_SPAN(key=f"ds-{token}", data={"token": token, "digits": list(digits), "length": len(digits),
                                              "show_ms": show_ms, "gap_ms": gap_ms, "instruction": instruction,
                                              "ask": ask},
-                    on_done_change=lambda: None)
-    return r.done
+                    default={"started": False}, on_started_change=lambda: None, on_done_change=lambda: None)
+    return r.done, r.started
 
 
 # ---------------------------------------------------------------- 위치 기억
@@ -287,7 +292,7 @@ _SPATIAL = st.components.v2.component(
 """,
     js="""
 export default function (component) {
-  const { data, parentElement, setTriggerValue } = component
+  const { data, parentElement, setTriggerValue, setStateValue } = component
   const root = parentElement.querySelector(".center")
   if (root.dataset.token === data.token) return
   root.dataset.token = data.token
@@ -317,6 +322,7 @@ export default function (component) {
     root.appendChild(btn)
   }
   const show = async () => {
+    setStateValue("started", true)
     root.querySelector(".btn").remove()
     root.querySelector(".hint").textContent = "집중하세요"
     const cells = root.querySelectorAll(".cell")
@@ -363,8 +369,8 @@ export default function (component) {
 def spatial_span(token: str, grid: int, sequence: list[int], show_ms: int, gap_ms: int):
     r = _SPATIAL(key=f"ss-{token}", data={"token": token, "grid": grid, "sequence": sequence,
                                           "show_ms": show_ms, "gap_ms": gap_ms},
-                 on_done_change=lambda: None)
-    return r.done
+                 default={"started": False}, on_started_change=lambda: None, on_done_change=lambda: None)
+    return r.done, r.started
 
 
 # ---------------------------------------------------------------- 기호 바꾸기
@@ -389,7 +395,7 @@ _SYMBOL = st.components.v2.component(
 """,
     js="""
 export default function (component) {
-  const { data, parentElement, setTriggerValue } = component
+  const { data, parentElement, setTriggerValue, setStateValue } = component
   const root = parentElement.querySelector(".center")
   if (root.dataset.token === data.token) return
   root.dataset.token = data.token
@@ -420,6 +426,7 @@ export default function (component) {
     root.appendChild(b)
   }
   const start = () => {
+    setStateValue("started", true)
     mode = "test"; idx = 0; correct = 0; wrong = 0
     screen(`남은 시간 <span class="time"></span>초`, true)
     endAt = performance.now() + data.duration_sec * 1000
@@ -467,5 +474,79 @@ export default function (component) {
 def symbol_coding(token: str, symbols: list[str], sequence: list[int], duration_sec: int):
     r = _SYMBOL(key=f"sc-{token}", data={"token": token, "symbols": symbols, "sequence": sequence,
                                          "duration_sec": duration_sec},
-                on_done_change=lambda: None)
-    return r.done
+                default={"started": False}, on_started_change=lambda: None, on_done_change=lambda: None)
+    return r.done, r.started
+
+
+# ---------------------------------------------------------------- 결과 카드 (PNG 저장)
+
+_CARD = st.components.v2.component(
+    "ltr_result_card",
+    html="<div class='wrap'><canvas width='1080' height='1350'></canvas><button class='btn pri'>결과 카드 저장 (PNG)</button></div>",
+    css=BASE_CSS + """
+.wrap { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+canvas { width: 100%; max-width: 360px; height: auto; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.12); }
+""",
+    js="""
+export default function (component) {
+  const { data, parentElement } = component
+  const cv = parentElement.querySelector("canvas")
+  const g = cv.getContext("2d")
+  const W = 1080, H = 1350, P = "#4F46E5"
+  const font = (w, s) => `${w} ${s}px "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif`
+  g.fillStyle = "#ffffff"; g.fillRect(0, 0, W, H)
+  g.fillStyle = P; g.fillRect(0, 0, W, 300)
+  g.fillStyle = "#ffffff"; g.textAlign = "center"
+  g.font = font(600, 40); g.fillText("종합사고지수 LTR Index", W / 2, 110)
+  g.font = font(800, 150); g.fillText(Math.round(data.index), W / 2, 260)
+  g.fillStyle = "#111827"
+  g.font = font(700, 52); g.fillText(`${data.position} · ${data.level}`, W / 2, 390)
+  g.fillStyle = "#6b7280"; g.font = font(400, 34)
+  g.fillText(`${data.mode} · IQ 척도(평균 100) 기준`, W / 2, 450)
+
+  // 레이더: 55~145를 반지름에 대응, 100 기준선
+  const cx = W / 2, cy = 860, R = 300, lo = 55, hi = 145
+  const n = data.domains.length
+  const pt = (i, v) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * i) / n
+    const r = (Math.min(Math.max(v, lo), hi) - lo) / (hi - lo) * R
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)]
+  }
+  g.strokeStyle = "#e5e7eb"; g.lineWidth = 2
+  for (const v of [70, 85, 115, 130, 145]) {
+    g.beginPath(); data.domains.forEach((_, i) => { const [x, y] = pt(i, v); i ? g.lineTo(x, y) : g.moveTo(x, y) })
+    g.closePath(); g.stroke()
+  }
+  g.setLineDash([10, 8]); g.strokeStyle = "#9ca3af"
+  g.beginPath(); data.domains.forEach((_, i) => { const [x, y] = pt(i, 100); i ? g.lineTo(x, y) : g.moveTo(x, y) })
+  g.closePath(); g.stroke(); g.setLineDash([])
+  g.strokeStyle = "#e5e7eb"
+  data.domains.forEach((_, i) => { const [x, y] = pt(i, hi); g.beginPath(); g.moveTo(cx, cy); g.lineTo(x, y); g.stroke() })
+  g.beginPath()
+  data.domains.forEach((d, i) => { const [x, y] = pt(i, d.index); i ? g.lineTo(x, y) : g.moveTo(x, y) })
+  g.closePath(); g.fillStyle = "rgba(79,70,229,.22)"; g.fill(); g.strokeStyle = P; g.lineWidth = 5; g.stroke()
+  data.domains.forEach((d, i) => {
+    const [x, y] = pt(i, d.index)
+    g.beginPath(); g.arc(x, y, 10, 0, 2 * Math.PI); g.fillStyle = P; g.fill()
+    const [lx, ly] = pt(i, hi + 26)
+    g.fillStyle = "#111827"; g.font = font(700, 36); g.fillText(d.label, lx, ly)
+    g.fillStyle = P; g.font = font(700, 32); g.fillText(Math.round(d.index), lx, ly + 40)
+  })
+  g.fillStyle = "#9ca3af"; g.font = font(400, 28)
+  g.fillText(`${data.date} · 온라인 인지능력 테스트이며 전문 심리검사를 대체하지 않습니다`, W / 2, H - 50)
+
+  parentElement.querySelector("button").onclick = () => {
+    const a = document.createElement("a")
+    a.download = `LTR-${Math.round(data.index)}.png`
+    a.href = cv.toDataURL("image/png")
+    a.click()
+  }
+}
+""",
+)
+
+
+def result_card(index: float, position: str, level: str, mode: str, date: str, domains: list[dict]) -> None:
+    """domains: [{"label": "유동추론", "index": 108.2}, ...]"""
+    _CARD(key="result-card", data={"index": index, "position": position, "level": level, "mode": mode, "date": date,
+                                   "domains": domains})

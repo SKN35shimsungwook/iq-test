@@ -70,3 +70,8 @@ def test_gs_and_wm_have_no_domain_deadline():
     assert ex.domain_time_limit(Domain.GS, Mode.FULL) == 0
     assert ex.domain_time_limit(Domain.GWM, Mode.FULL) == 0
     assert ex.domain_time_limit(Domain.GF, Mode.FULL) == 9 * 60
+
+
+def test_aborted_speed_block_scores_zero():
+    assert ex.score_item(BY_ID["gs-01a"], ex.ABORTED_GS, 1) == (False, 0.0)
+    assert ex.score_item(BY_ID["gwm-01a"], "", 1) == (False, 0.0)

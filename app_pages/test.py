@@ -17,8 +17,10 @@ INTROS = {
     Domain.GC: "낱말의 뜻과 관계를 묻는 문제입니다.",
     Domain.GQ: "수의 규칙을 찾거나 간단한 계산으로 답을 구하는 문제입니다. 종이와 펜을 써도 됩니다.",
     Domain.GV: "도형을 머릿속으로 돌리고, 접고, 맞춰 보는 문제입니다.",
-    Domain.GWM: "화면에 잠깐 나타나는 숫자나 위치를 기억했다가 입력합니다. 한 번만 보여 주며 메모는 하지 마세요.",
-    Domain.GS: "기호를 보고 짝이 되는 숫자를 최대한 빠르고 정확하게 누릅니다. 틀린 만큼 감점됩니다.",
+    Domain.GWM: "화면에 잠깐 나타나는 숫자나 위치를 기억했다가 입력합니다. 한 번만 보여 주며 메모는 하지 마세요. "
+                "보여 주는 도중에 새로고침하면 그 문항은 0점 처리됩니다.",
+    Domain.GS: "기호를 보고 짝이 되는 숫자를 최대한 빠르고 정확하게 누릅니다. 틀린 만큼 감점됩니다. "
+               "본 검사 도중에 새로고침하면 0점 처리됩니다.",
 }
 
 if st.session_state.phase != "test":
@@ -88,6 +90,8 @@ if ex.is_expired(exam):
     close_domain()
 
 item = items[ids[exam["i"]]]
+if notice := ss.pop("notice", None):
+    st.toast(notice, icon=":material/warning:")
 with st.container(horizontal=True, vertical_alignment="center"):
     st.markdown(f"**{spec.label}** · {exam['i'] + 1} / {len(ids)}")
     if exam["deadline"]:
@@ -152,23 +156,33 @@ if item.format is ItemFormat.MCQ:
 
 else:
     token = f"{ss.session_id}-{item.id}"
-    if item.format is ItemFormat.SYMBOL_CODING:
+    started_ids = exam.setdefault("started", [])
+    live_key = f"live-{item.id}"  # 이 브라우저 세션에서 제시를 시작했다는 표시 (새로고침하면 사라짐)
+    if item.id in started_ids and item.id not in exam["answers"] and not ss.get(live_key):
+        # 제시가 시작된 뒤 새로고침했다 → 같은 자극을 다시 보여 주지 않고 0점 처리
+        exam["answers"][item.id] = ex.ABORTED_GS if item.format is ItemFormat.SYMBOL_CODING else ""
+        ss.notice = "진행 중에 새로고침해서 앞 문항은 0점 처리되었습니다."
+        done = True
+    elif item.format is ItemFormat.SYMBOL_CODING:
         stim = ex.gs_stimulus(item, seed)
-        done = ui.symbol_coding(token, stim["symbols"], stim["sequence"], item.params["duration_sec"])
+        done, started = ui.symbol_coding(token, stim["symbols"], stim["sequence"], item.params["duration_sec"])
         if done:
             exam["answers"][item.id] = json.dumps(done)
             exam["ms"][item.id] = item.params["duration_sec"] * 1000
     else:
         stim = ex.wm_stimulus(item, seed)
+        p = item.params
         if item.format is ItemFormat.SPATIAL_SPAN:
-            p = item.params
-            done = ui.spatial_span(token, p["grid"], stim["sequence"], p["show_ms"], p["gap_ms"])
+            done, started = ui.spatial_span(token, p["grid"], stim["sequence"], p["show_ms"], p["gap_ms"])
         else:
-            p = item.params
-            done = ui.digit_span(token, stim["digits"], p["mode"], p["show_ms"], p["gap_ms"])
+            done, started = ui.digit_span(token, stim["digits"], p["mode"], p["show_ms"], p["gap_ms"])
         if done:
             exam["answers"][item.id] = done["answer"]
             exam["ms"][item.id] = done["rt_ms"]
+    if not done and started and item.id not in started_ids:
+        started_ids.append(item.id)
+        ss[live_key] = True
+        save_progress()
     if done:
         if exam["i"] < len(ids) - 1:
             exam["i"] += 1

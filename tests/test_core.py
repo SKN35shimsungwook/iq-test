@@ -69,3 +69,33 @@ def test_generated_forms_use_different_rules():
     items = [it for it in load_items() if it.slot == "gf-01"]
     assert len(items) >= 6
     assert len({str(it.params["rules"]) for it in items}) == len(items)
+
+
+def test_hand_written_answer_positions_are_balanced():
+    from collections import Counter
+
+    written = [it for it in load_items() if it.domain is Domain.GC or it.slot in ("gq-02", "gq-08")]
+    pos = Counter(it.answer for it in written)
+    assert max(pos.values()) - min(pos.values()) <= 4, pos
+    for it in written:
+        assert it.validate() == []  # 정답을 옮긴 뒤에도 verify 식과 일치
+
+
+def test_save_responses_is_idempotent():
+    engine = sa.create_engine("sqlite://")
+    db.init_db(engine)
+    sid = db.start_session(engine, "c", "quick", 1, "t")
+    row = dict(item_id="gf-01a", item_version=1, domain="gf", answer="0", correct=True, score=1, response_ms=10)
+    db.save_responses(engine, sid, [row])
+    db.save_responses(engine, sid, [row])
+    with engine.connect() as conn:
+        assert conn.execute(sa.select(sa.func.count()).select_from(db.responses)).scalar_one() == 1
+
+
+def test_progress_roundtrip():
+    engine = sa.create_engine("sqlite://")
+    db.init_db(engine)
+    sid = db.start_session(engine, "c", "full", 5, "t")
+    db.save_progress(engine, sid, {"d": 1, "answers": {"gf-01a": "2"}})
+    row = db.load_session(engine, sid)
+    assert row["progress"]["answers"] == {"gf-01a": "2"} and row["form_seed"] == 5

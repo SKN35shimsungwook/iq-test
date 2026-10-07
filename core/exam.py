@@ -13,6 +13,7 @@ from core.schema import BLUEPRINT, Domain, Item, ItemFormat, Mode
 
 SYMBOLS = ["◆", "▲", "●", "■", "★", "✚", "◐", "♥", "☾"]
 EXPIRY_SLACK_SEC = 1.0  # 브라우저 타이머가 서버보다 조금 먼저 끝나는 차이를 흡수
+ABORTED_GS = json.dumps({"correct": 0, "wrong": 0, "aborted": True})  # 진행 중 새로고침한 처리속도 블록
 
 
 def new_exam(form: dict[Domain, list[Item]], mode: Mode) -> dict:
@@ -27,6 +28,7 @@ def new_exam(form: dict[Domain, list[Item]], mode: Mode) -> dict:
         "deadline": None,  # 영역 마감 시각 (epoch 초)
         "entered": None,   # 현재 문항을 보기 시작한 시각
         "blurs": 0,        # 탭·창 이탈 횟수
+        "started": [],     # 제시가 시작된 작업기억·처리속도 문항 (새로고침 재시청 방지)
         "raw": {},         # domain → 원점수
         "mode": mode.value,
     }
