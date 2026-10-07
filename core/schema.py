@@ -80,12 +80,6 @@ class DomainSpec:
         return ids
 
 
-def route(correct: int, n: int) -> str:
-    """1단계 정답 비율로 2단계 묶음을 고른다. 4문항: 0~1 쉬움, 2 중간, 3~4 어려움 / 2문항: 0·1·2."""
-    ratio = correct / n
-    return "easy" if ratio < 0.4 else "hard" if ratio >= 0.75 else "mid"
-
-
 def _plan(d: str, stage1: str, easy: str = "", mid: str = "", hard: str = "") -> Plan:
     """"matrix2 sequence2" 같은 짧은 표기를 슬롯 ID로 바꾼다."""
     def ids(text: str) -> tuple[str, ...]:
@@ -104,7 +98,7 @@ BLUEPRINT: dict[Domain, DomainSpec] = {
                    easy="matrix1 sequence1 odd_one_out1 analogy1 transform1",
                    mid="matrix3 sequence3 odd_one_out3 analogy3 transform3",
                    hard="matrix4 sequence4 odd_one_out3 analogy4 transform4"),
-        quick=_plan("gf", "matrix2 odd_one_out2", easy="sequence1 transform1",
+        quick=_plan("gf", "matrix2 odd_one_out3", easy="sequence1 transform1",
                     mid="sequence3 transform3", hard="sequence4 transform4"),
         time_full=9 * 60, time_quick=4 * 60),
     Domain.GC: DomainSpec(
@@ -113,7 +107,7 @@ BLUEPRINT: dict[Domain, DomainSpec] = {
                    easy="synonym1 analogy1 category1 antonym2",
                    mid="synonym3 analogy3 category3 completion3",
                    hard="synonym4 analogy4 antonym3 completion4"),
-        quick=_plan("gc", "synonym2 category2", easy="analogy1 antonym2",
+        quick=_plan("gc", "synonym2 category3", easy="analogy1 antonym2",
                     mid="analogy3 completion3", hard="analogy4 completion4"),
         time_full=5 * 60, time_quick=150),
     Domain.GQ: DomainSpec(
@@ -122,7 +116,7 @@ BLUEPRINT: dict[Domain, DomainSpec] = {
                    easy="series1 applied1 data1 operator1",
                    mid="series3 number_matrix3 data2 applied3",
                    hard="series4 number_matrix4 operator3 applied4"),
-        quick=_plan("gq", "series2 number_matrix2", easy="operator1 applied1",
+        quick=_plan("gq", "series2 number_matrix3", easy="operator1 applied1",
                     mid="operator2 applied3", hard="operator3 applied4"),
         time_full=7 * 60, time_quick=4 * 60),
     Domain.GV: DomainSpec(
@@ -131,7 +125,7 @@ BLUEPRINT: dict[Domain, DomainSpec] = {
                    easy="rotation1 paper_fold1 cube_net1 assembly1",
                    mid="rotation3 paper_fold3 cube_net3 assembly3",
                    hard="rotation4 paper_fold4 cube_net4 assembly4"),
-        quick=_plan("gv", "rotation2 cube_net2", easy="paper_fold1 assembly1",
+        quick=_plan("gv", "rotation2 cube_net3", easy="paper_fold1 assembly1",
                     mid="paper_fold3 assembly3", hard="paper_fold4 assembly4"),
         time_full=7 * 60, time_quick=4 * 60),
     Domain.GWM: DomainSpec(
@@ -140,7 +134,7 @@ BLUEPRINT: dict[Domain, DomainSpec] = {
                    easy="forward1 backward1 sorting1 spatial1",
                    mid="forward3 backward3 sorting3 spatial3",
                    hard="forward4 backward4 sorting4 spatial4"),
-        quick=_plan("gwm", "forward2 spatial2", easy="backward1 sorting1",
+        quick=_plan("gwm", "forward2 spatial3", easy="backward1 sorting1",
                     mid="backward3 sorting3", hard="backward4 sorting4"),
         time_full=0),
     Domain.GS: DomainSpec("처리속도", full=_plan("gs", "symbol_coding2"), quick=None, time_full=90),

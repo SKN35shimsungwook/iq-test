@@ -9,7 +9,8 @@ import json
 import random
 import time
 
-from core.schema import BLUEPRINT, Domain, Item, ItemFormat, Mode, route
+from core import scoring
+from core.schema import BLUEPRINT, Domain, Item, ItemFormat, Mode
 
 SYMBOLS = ["◆", "▲", "●", "■", "★", "✚", "◐", "♥", "☾"]
 EXPIRY_SLACK_SEC = 1.0  # 브라우저 타이머가 서버보다 조금 먼저 끝나는 차이를 흡수
@@ -60,11 +61,11 @@ def stage_start(exam: dict) -> int:
 
 
 def route_domain(exam: dict, items: dict[str, Item], seed: int) -> str:
-    """1단계 정답 수로 2단계 묶음을 골라 출제 목록 뒤에 붙인다."""
+    """1단계 응답으로 2단계 묶음을 골라 출제 목록 뒤에 붙인다."""
     d = exam["domains"][exam["d"]]
     stage1 = exam["items"][d][: exam["stage1_n"][d]]
-    correct = sum(score_item(items[i], exam["answers"].get(i), seed)[0] for i in stage1)
-    panel = route(correct, len(stage1))
+    correct = [score_item(items[i], exam["answers"].get(i), seed)[0] for i in stage1]
+    panel = scoring.route([items[i] for i in stage1], correct)
     exam["path"][d] = panel
     exam["items"][d] = stage1 + exam["panels"][d][panel]
     exam["i"] = len(stage1)

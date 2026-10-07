@@ -2,7 +2,7 @@ import sqlalchemy as sa
 
 from core import db
 from core.item_bank import build_form, load_items, validate_blueprint, validate_bank
-from core.schema import BLUEPRINT, SLOTS, Domain, Item, ItemFormat, Mode, route
+from core.schema import BLUEPRINT, SLOTS, Domain, Item, ItemFormat, Mode
 
 
 def make_item(**kw) -> Item:
@@ -93,10 +93,19 @@ def test_blueprint_paths_and_lengths():
         assert lv["easy"] < lv["mid"] < lv["hard"]
 
 
-def test_route_thresholds():
-    assert [route(c, 4) for c in range(5)] == ["easy", "easy", "mid", "hard", "hard"]
-    assert [route(c, 2) for c in range(3)] == ["easy", "mid", "hard"]
-    assert [route(c, 5) for c in range(6)] == ["easy", "easy", "mid", "mid", "hard", "hard"]
+def test_route_uses_ability_estimate():
+    from core import scoring as sc
+
+    def pick(level: int) -> Item:
+        return next(it for it in ITEMS if it.slot == f"gf-matrix-{level}")
+    two = [pick(2), pick(2)]
+    assert sc.route(two, [False, False]) == "easy"
+    assert sc.route(two, [True, True]) == "hard"
+    # 같은 문항이면 더 많이 맞힐수록 같거나 높은 묶음으로 간다
+    order = {"easy": 0, "mid": 1, "hard": 2}
+    four = [pick(2), pick(2), pick(3), pick(3)]
+    levels = [order[sc.route(four, [k > i for i in range(4)])] for k in range(5)]
+    assert levels == sorted(levels) and levels[0] == 0 and levels[-1] == 2
 
 
 def test_generated_forms_use_different_rules():
@@ -147,3 +156,18 @@ def test_series_rounds_and_seen_items():
     assert db.seen_items(engine, s1) == {"gf-matrix-2a"}
     db.complete_session(engine, s2, {}, {}, 110, 70, thetas={"total": 0.5})
     assert db.norm_thetas(engine, "quick") == [{"total": 0.0}]  # 규준은 1라운드만
+
+
+def test_calibration_file_overrides_assumed_params(tmp_path):
+    import json as _json
+    import shutil
+
+    from core.item_bank import ITEMS_DIR, load_items as _load
+    from core.scoring import item_params
+
+    for f in ITEMS_DIR.glob("*.json"):
+        if f.name != "calibration.json":
+            shutil.copy(f, tmp_path / f.name)
+    (tmp_path / "calibration.json").write_text(_json.dumps({"gc-synonym-1a": {"irt_a": 1.2, "irt_b": -1.5, "irt_c": 0.2}}))
+    it = next(i for i in _load(tmp_path) if i.id == "gc-synonym-1a")
+    assert item_params(it) == (1.2, -1.5, 0.2)

@@ -60,9 +60,22 @@ def balance_answer_positions(items: list[Item]) -> list[Item]:
     return out
 
 
+CALIBRATION = "calibration.json"  # 관리자 페이지에서 내려받은 문항 모수 보정값 {문항 ID: {irt_a, irt_b, irt_c}}
+
+
+def apply_calibration(items: list[Item], path: Path) -> list[Item]:
+    if not path.exists():
+        return items
+    calib = json.loads(path.read_text(encoding="utf-8"))
+    return [replace(it, **{k: v for k, v in calib[it.id].items() if k in ("irt_a", "irt_b", "irt_c")})
+            if it.id in calib else it for it in items]
+
+
 def load_items(items_dir: Path = ITEMS_DIR) -> list[Item]:
     items: list[Item] = []
     for path in sorted(items_dir.glob("*.json")):
+        if path.name == CALIBRATION:
+            continue
         with path.open(encoding="utf-8") as f:
             data = json.load(f)
         if path.name == GENERATED:
@@ -75,7 +88,7 @@ def load_items(items_dir: Path = ITEMS_DIR) -> list[Item]:
                 item = materialize(item)
             written.append(item)
         items.extend(balance_answer_positions(written))
-    return items
+    return apply_calibration(items, items_dir / CALIBRATION)
 
 
 def validate_bank(items: list[Item]) -> list[str]:

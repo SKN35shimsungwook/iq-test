@@ -172,6 +172,7 @@ def norm_thetas(engine: Engine, mode: str, exclude: str | None = None) -> list[d
     q = sa.select(sessions.c.thetas).where(
         sessions.c.mode == mode,
         sessions.c.round == 1,
+        sessions.c.app_version != "sim",  # 시뮬레이션 데이터는 규준에서 제외
         sessions.c.completed_at.is_not(None),
         sessions.c.is_first_attempt.is_(True),
         sessions.c.thetas.is_not(None),
