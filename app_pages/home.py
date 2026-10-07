@@ -5,7 +5,7 @@ import streamlit as st
 from core import db
 from core.components import client_id
 from core.runtime import APP_VERSION, get_engine
-from core.schema import BLUEPRINT, MODE_LABELS, Mode
+from core.schema import BLUEPRINT, MODE_LABELS, Domain, Mode
 
 
 def fmt_time(sec: int) -> str:
@@ -31,13 +31,13 @@ with st.container(border=True):
         st.markdown("**빠른 검사** · 약 15분 · 종합지수 중심 (영역별 점수는 참고용)")
     else:
         st.markdown("**정밀 검사** · 약 35분 · 영역별 강점·약점 분석 포함")
-    rows = [(spec.label, spec.slots_for(mode), spec.time_for(mode)) for spec in BLUEPRINT.values()]
-    rows = [(label, slots, t) for label, slots, t in rows if slots]
+    rows = [(d, spec.label, spec.length_for(mode), spec.time_for(mode)) for d, spec in BLUEPRINT.items()]
+    rows = [(d, label, n, t) for d, label, n, t in rows if n]
     st.table(
         {
-            "영역": [label for label, _, _ in rows],
-            "문항": ["1블록" if slots[0].subtype == "symbol_coding" else f"{len(slots)}문항" for _, slots, _ in rows],
-            "제한시간": [fmt_time(t) for _, _, t in rows],
+            "영역": [label for _, label, _, _ in rows],
+            "문항": ["1블록" if d is Domain.GS else f"{n}문항" for d, _, n, _ in rows],
+            "제한시간": [fmt_time(t) for _, _, _, t in rows],
         }
     )
     st.caption("조용한 곳에서 한 번에 응시해 주세요.")
@@ -68,5 +68,7 @@ if st.button("검사 시작", type="primary", disabled=not agreed, icon=":materi
     st.session_state.session_id = db.start_session(
         get_engine(), st.session_state.client_id, mode.value, seed, APP_VERSION
     )
+    st.session_state.series_id = st.session_state.session_id
+    st.session_state.round = 1
     st.session_state.phase = "test"
     st.switch_page("app_pages/test.py")

@@ -75,6 +75,11 @@ SEQ_LEVELS = {
     1: [{"rot": 90}, {"rot": 45}, {"fill": 3}, {"shape": 3}, {"count": 3}, {"shape": 2}],
     2: [{"rot": 90, "fill": 2}, {"rot": -45, "count": 3}, {"shape": 3, "fill": 2},
         {"shape": 2, "count": 3}, {"fill": 3, "count": 2}, {"rot": 45, "fill": 3}],
+    3: [{"rot": 90, "fill": 3, "count": 2}, {"rot": -90, "fill": 2, "count": 3}, {"shape": 3, "fill": 2, "count": 3},
+        {"rot": 45, "count": 3, "fill": 2}, {"shape": 2, "fill": 3, "count": 4}, {"rot": -45, "fill": 3, "count": 4}],
+    # "acc": 도는 각도가 한 칸마다 45°씩 커짐, count 4: a, a+1, a+2, a+1로 오르내림
+    4: [{"rot": "acc", "fill": 3}, {"rot": "acc", "count": 3}, {"rot": "acc", "fill": 2, "count": 3},
+        {"count": 4, "shape": 3, "fill": 2}, {"count": 4, "fill": 3}, {"rot": "acc", "count": 4}],
 }
 FRAMES = 6  # 5칸 제시 + 정답 1칸
 
@@ -82,13 +87,22 @@ FRAMES = 6  # 5칸 제시 + 정답 1칸
 def _seq_values(attr: str, rule: int, rng: random.Random) -> list:
     if attr == "rot":
         start = rng.choice([0, 90, 180, 270])
+        if rule == "acc":
+            return [(start + 45 * i * (i + 1) // 2) % 360 for i in range(FRAMES + 1)]
         return [(start + rule * i) % 360 for i in range(FRAMES + 1)]
+    if attr == "count" and rule == 4:
+        a = rng.randint(1, 3)
+        return [[a, a + 1, a + 2, a + 1][i % 4] for i in range(FRAMES + 1)]
     pool = [v for v in VALUES[attr] if attr != "count" or v <= 4]
     cycle = rng.sample(pool, rule)
     return [cycle[i % rule] for i in range(FRAMES + 1)]
 
 
 def _seq_text(attr: str, rule: int) -> str:
+    if attr == "rot" and rule == "acc":
+        return "화살표가 도는 각도가 45°, 90°, 135°, …로 한 칸마다 45°씩 커집니다."
+    if attr == "count" and rule == 4:
+        return "개수가 하나씩 늘었다가 다시 줄어드는 흐름(예: 1, 2, 3, 2, 1, 2, …)이 반복됩니다."
     if attr == "rot":
         way = "시계" if rule > 0 else "반시계"
         return f"화살표가 한 칸마다 {way} 방향으로 {abs(rule)}°씩 돕니다."
@@ -130,9 +144,12 @@ TRANSFORMS = {
     "double": ("count", lambda c: {**c, "count": c["count"] * 2}, "개수를 두 배로 늘립니다"),
 }
 ANALOGY_LEVELS = {
+    1: [["invert"], ["count_up"], ["rot180"], ["invert"], ["count_up"], ["rot90"]],  # A와 C가 같은 모양
     2: [["rot90"], ["invert"], ["count_up"], ["rot180"], ["double"], ["rot270"]],
     3: [["rot90", "invert"], ["count_up", "invert"], ["double", "rot180"], ["rot270", "count_up"],
         ["rot90", "double"], ["rot180", "invert"]],
+    4: [["rot90", "invert", "count_up"], ["rot270", "invert", "double"], ["rot180", "count_up", "invert"],
+        ["rot90", "double", "invert"], ["rot270", "count_up", "invert"], ["rot180", "double", "invert"]],
 }
 
 
@@ -150,7 +167,8 @@ def _apply(cell: Cell, names: list[str]) -> Cell | None:
 def _transform_combos() -> list[list[str]]:
     singles = [[n] for n in TRANSFORMS]
     pairs = [[a, b] for a, b in combinations(TRANSFORMS, 2) if TRANSFORMS[a][0] != TRANSFORMS[b][0]]
-    return singles + pairs
+    triples = [list(t) for t in combinations(TRANSFORMS, 3) if len({TRANSFORMS[n][0] for n in t}) == 3]
+    return singles + pairs + triples
 
 
 def analogy_item(item: Item) -> Item:
@@ -163,6 +181,8 @@ def analogy_item(item: Item) -> Item:
 
     for _ in range(1000):
         a, c = _base_cell(rng, arrow), _base_cell(rng, arrow)
+        if spec["level"] == 1:
+            c["shape"] = a["shape"]
         a["fill"], c["fill"] = rng.choice(["white", "black"]), rng.choice(["white", "black"])
         if arrow:
             a["rot"], c["rot"] = rng.choice([0, 90, 180, 270]), rng.choice([0, 90, 180, 270])
@@ -173,7 +193,9 @@ def analogy_item(item: Item) -> Item:
         rivals = [m for m in _transform_combos() if _apply(a, m) is not None and _key(_apply(a, m)) == _key(b)]
         if any(_apply(c, m) is None or _key(_apply(c, m)) != _key(ans) for m in rivals):
             continue
-        if len(names) == 2:
+        if len(names) == 3:  # 변환 하나씩 빠뜨린 결과가 오답
+            options = [ans, *(_apply(c, [n for n in names if n != skip]) for skip in names)]
+        elif len(names) == 2:
             options = [ans, _apply(c, names[:1]), _apply(c, names[1:]), c]
         else:
             d = rng.choice(decoys)
@@ -211,9 +233,14 @@ ODD_FAMILIES = {
     "rot": lambda c: c["rot"] if c["shape"] == "arrow" else None,
     "parity": lambda c: c["count"] % 2,
     "corners": lambda c: CORNERS.get(c["shape"]) == c["count"],
+    # 두 속성의 관계: 홀수 개면 검은색 / 세로(위·아래)를 향하면 검은색
+    "fill_parity": lambda c: None if c["fill"] == "gray" else (c["fill"] == "black") == (c["count"] % 2 == 1),
+    "rot_fill": lambda c: None if c["shape"] != "arrow" or c["fill"] == "gray"
+    else (c["fill"] == "black") == (c["rot"] in (0, 180)),
 }
 ODD_LEVELS = {1: ["shape", "fill", "count", "rot", "shape", "fill"],
-              2: ["parity", "corners", "parity", "corners", "rot", "count"]}
+              2: ["parity", "corners", "parity", "corners", "rot", "count"],
+              3: ["fill_parity", "rot_fill", "fill_parity", "rot_fill", "fill_parity", "rot_fill"]}
 
 
 def _odd_index(cells: list[Cell], fam: str) -> int | None:
@@ -237,13 +264,16 @@ def _odd_text(fam: str, cells: list[Cell], odd: int) -> str:
         "rot": f"나머지 셋은 화살표가 모두 {DIR_KO[c['rot']]} 방향을 향합니다.",
         "parity": f"나머지 셋은 개수가 모두 {'홀수' if c['count'] % 2 else '짝수'}입니다.",
         "corners": "나머지 셋은 도형의 개수가 꼭짓점 수와 같습니다 (삼각형 3개, 사각형 4개, 오각형 5개).",
+        "fill_parity": "나머지 셋은 '개수가 홀수면 검은색, 짝수면 흰색' 규칙을 따릅니다.",
+        "rot_fill": "나머지 셋은 '위·아래를 향하면 검은색, 왼쪽·오른쪽을 향하면 흰색' 규칙을 따릅니다.",
     }[fam]
 
 
 def _random_cell(rng: random.Random, fam: str) -> Cell:
-    shape = "arrow" if fam == "rot" else rng.choice(list(CORNERS) if fam == "corners" else SHAPES)
+    shape = "arrow" if fam in ("rot", "rot_fill") else rng.choice(list(CORNERS) if fam == "corners" else SHAPES)
     count = CORNERS[shape] if fam == "corners" else rng.randint(1, 4)
-    return {"shape": shape, "count": count, "fill": rng.choice(VALUES["fill"]),
+    fills = ["white", "black"] if fam in ("fill_parity", "rot_fill") else VALUES["fill"]
+    return {"shape": shape, "count": count, "fill": rng.choice(fills),
             "rot": rng.choice([0, 90, 180, 270]) if shape == "arrow" else 0}
 
 
@@ -266,6 +296,14 @@ def odd_one_out_item(item: Item) -> Item:
             for c in cells[:3]:
                 c["count"] = rng.choice([n for n in range(1, 6) if n % 2 == par])
             cells[3]["count"] = rng.choice([n for n in range(1, 6) if n % 2 != par])
+        elif fam == "fill_parity":
+            for c in cells:
+                c["fill"] = "black" if c["count"] % 2 else "white"
+            cells[3]["fill"] = "white" if cells[3]["fill"] == "black" else "black"
+        elif fam == "rot_fill":
+            for c in cells:
+                c["fill"] = "black" if c["rot"] in (0, 180) else "white"
+            cells[3]["fill"] = "white" if cells[3]["fill"] == "black" else "black"
         elif fam == "corners":
             cells[3]["count"] = rng.choice([n for n in range(2, 6) if n != CORNERS[cells[3]["shape"]]])
         if len({_key(c) for c in cells}) < 4 or _odd_index(cells, fam) != 3:
@@ -294,11 +332,16 @@ OPS = {
 }
 GLYPHS = [("◆", "#dc2626"), ("●", "#2563eb"), ("▲", "#16a34a"), ("■", "#d97706")]
 TRANSFORM_LEVELS = {
+    1: [["rot90", "invert"], ["add", "invert"], ["rot180", "add"], ["invert", "rot270"],
+        ["remove", "rot90"], ["add", "rot90"]],
     2: [["rot90", "invert", "add"], ["rot270", "add", "invert"], ["rot180", "remove", "invert"],
         ["invert", "rot90", "remove"], ["add", "rot180", "rot90"], ["remove", "rot270", "invert"]],
     3: [["rot90", "invert", "add", "rot180"], ["rot270", "remove", "invert", "add"],
         ["invert", "rot90", "rot270", "add"], ["add", "rot180", "invert", "remove"],
         ["rot90", "add", "remove", "invert"], ["rot180", "invert", "rot90", "add"]],
+    4: [["rot90", "invert", "add", "rot270"], ["rot270", "remove", "invert", "add"],
+        ["invert", "rot90", "rot180", "add"], ["add", "rot180", "invert", "rot90"],
+        ["rot90", "add", "remove", "invert"], ["rot180", "invert", "rot270", "add"]],
 }
 
 
@@ -314,12 +357,12 @@ def transform_item(item: Item) -> Item:
     spec = item.svg
     rng = random.Random(spec["seed"])
     legend: list[str] = pick_variant(spec, TRANSFORM_LEVELS[spec["level"]])
-    steps = spec["level"]  # 보통 2단계, 어려움 3단계
+    steps = spec["level"]  # 쉬움 1단계 … 매우 어려움 4단계 (기호를 반복해서 쓸 수 있음)
     for _ in range(2000):
         start = {"shape": "arrow", "count": rng.randint(1, 4), "fill": rng.choice(["white", "black"]),
                  "rot": rng.choice([0, 90, 180, 270])}
         seq = [rng.choice(legend) for _ in range(steps)]
-        if len(set(seq)) < steps:
+        if len(set(seq)) < min(steps, 3):
             continue
         ans = _run(start, seq)
         if ans is None or _key(ans) == _key(start):
@@ -330,6 +373,7 @@ def transform_item(item: Item) -> Item:
             for other in legend:
                 if other != seq[i]:
                     wrong.append(_run(start, seq[:i] + [other] + seq[i + 1:]))
+        wrong += [_run(start, seq + [seq[-1]]), start]  # 한 번 더 적용하거나 아무것도 적용하지 않은 경우
         uniq = []
         for w in wrong:
             if w is not None and _key(w) != _key(ans) and _key(w) not in {_key(u) for u in uniq}:

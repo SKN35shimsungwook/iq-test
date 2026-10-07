@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT))
 
 from core.item_bank import load_items  # noqa: E402
 from core.item_bank import items_by_slot  # noqa: E402
-from core.schema import BLUEPRINT, DIFFICULTY_LABELS, ItemFormat  # noqa: E402
+from core.schema import BLUEPRINT, DIFFICULTY_LABELS, SLOTS, ItemFormat  # noqa: E402
 
 OUT = ROOT / "review" / "items_review.html"
 LETTERS = "ABCD"
@@ -62,11 +62,10 @@ pool = items_by_slot(items)
 sections = []
 for domain, spec in BLUEPRINT.items():
     sections.append(f"<h2>{spec.label} ({domain.value})</h2>")
-    for s in spec.slots:
-        group = sorted(pool.get(s.id, []), key=lambda it: it.id)
-        quick = " · 빠른 검사 포함" if s.quick else ""
-        sections.append(f'<h3>{s.id} · {s.subtype} · {DIFFICULTY_LABELS[s.difficulty]}{quick} '
-                        f'— 동형 {len(group)}개</h3>')
+    for sid in sorted(spec.slot_ids, key=lambda x: (SLOTS[x].subtype, SLOTS[x].difficulty)):
+        s = SLOTS[sid]
+        group = sorted(pool.get(sid, []), key=lambda it: it.id)
+        sections.append(f'<h3>{sid} · {DIFFICULTY_LABELS[s.difficulty]} — 동형 {len(group)}개</h3>')
         sections.extend(render_item(it) for it in group)
 
 OUT.parent.mkdir(exist_ok=True)

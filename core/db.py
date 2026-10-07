@@ -20,6 +20,8 @@ sessions = sa.Table(
     sa.Column("id", sa.String(36), primary_key=True),
     sa.Column("client_id", sa.String(36), nullable=False, index=True),  # 익명 브라우저 ID
     sa.Column("mode", sa.String(8), nullable=False),  # quick | full (규준은 모드별로 따로)
+    sa.Column("series_id", sa.String(36), index=True),  # 같은 사람이 이어서 푼 라운드 묶음 (1라운드 세션 ID)
+    sa.Column("round", sa.Integer, nullable=False, server_default="1"),
     sa.Column("is_first_attempt", sa.Boolean, nullable=False),
     sa.Column("form_seed", sa.Integer, nullable=False),
     sa.Column("app_version", sa.String(20), nullable=False),
@@ -39,7 +41,7 @@ responses = sa.Table(
     metadata,
     sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
     sa.Column("session_id", sa.String(36), sa.ForeignKey("sessions.id"), nullable=False, index=True),
-    sa.Column("item_id", sa.String(20), nullable=False, index=True),
+    sa.Column("item_id", sa.String(40), nullable=False, index=True),
     sa.Column("item_version", sa.Integer, nullable=False),
     sa.Column("domain", sa.String(8), nullable=False),
     sa.Column("answer", sa.Text),       # 미응답이면 NULL
@@ -58,7 +60,8 @@ def init_db(engine: Engine) -> None:
     metadata.create_all(engine)
 
 
-def start_session(engine: Engine, client_id: str, mode: str, form_seed: int, app_version: str) -> str:
+def start_session(engine: Engine, client_id: str, mode: str, form_seed: int, app_version: str,
+                  series_id: str | None = None, round_no: int = 1) -> str:
     session_id = str(uuid.uuid4())
     with engine.begin() as conn:
         # 같은 브라우저에서 완료한 세션이 이미 있으면 규준 계산에서 제외할 재응시로 표시
@@ -72,6 +75,8 @@ def start_session(engine: Engine, client_id: str, mode: str, form_seed: int, app
                 id=session_id,
                 client_id=client_id,
                 mode=mode,
+                series_id=series_id or session_id,
+                round=round_no,
                 is_first_attempt=prior == 0,
                 form_seed=form_seed,
                 app_version=app_version,
@@ -147,10 +152,26 @@ def norm_raw_scores(engine: Engine, mode: str) -> list[dict]:
     return [r.raw_scores for r in rows]
 
 
+def series_sessions(engine: Engine, series_id: str) -> list[dict]:
+    """같은 라운드 묶음의 세션들 (라운드 순)."""
+    with engine.connect() as conn:
+        rows = conn.execute(sa.select(sessions).where(sessions.c.series_id == series_id)
+                            .order_by(sessions.c.round)).all()
+    return [dict(r._mapping) for r in rows]
+
+
+def seen_items(engine: Engine, series_id: str) -> set[str]:
+    """라운드 묶음에서 이미 출제된 문항 ID (추가 라운드가 겹치지 않게)."""
+    q = sa.select(responses.c.item_id).join(sessions, sessions.c.id == responses.c.session_id)         .where(sessions.c.series_id == series_id)
+    with engine.connect() as conn:
+        return {r.item_id for r in conn.execute(q)}
+
+
 def norm_thetas(engine: Engine, mode: str, exclude: str | None = None) -> list[dict]:
-    """실제 규준 계산용: 해당 모드에서 완료된 첫 응시 세션들의 능력 추정치."""
+    """실제 규준 계산용: 해당 모드에서 완료된 첫 응시(1라운드) 세션들의 능력 추정치."""
     q = sa.select(sessions.c.thetas).where(
         sessions.c.mode == mode,
+        sessions.c.round == 1,
         sessions.c.completed_at.is_not(None),
         sessions.c.is_first_attempt.is_(True),
         sessions.c.thetas.is_not(None),

@@ -48,6 +48,8 @@ def init_state() -> None:
     ss.setdefault("session_id", None)  # 검사 시작 시 DB 세션 ID
     ss.setdefault("mode", None)        # Mode.QUICK | Mode.FULL
     ss.setdefault("form_seed", None)
+    ss.setdefault("series_id", None)   # 추가 라운드 묶음 ID (1라운드 세션 ID)
+    ss.setdefault("round", 1)
     ss.setdefault("phase", "intro")    # intro → test → result
     if ss.session_id is None and "s" in st.query_params:
         _resume(st.query_params["s"])
@@ -64,6 +66,8 @@ def _resume(session_id: str) -> None:
     ss.client_id = row["client_id"]
     ss.mode = Mode(row["mode"])
     ss.form_seed = row["form_seed"]
+    ss.series_id = row["series_id"] or row["id"]
+    ss.round = row["round"] or 1
     ss.exam = row["progress"]
     ss.phase = "result" if row["progress"]["d"] >= len(row["progress"]["domains"]) else "test"
 

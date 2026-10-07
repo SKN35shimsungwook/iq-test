@@ -21,8 +21,10 @@ FOLDS = {      # 접는 방향: (접혀 넘어가는 쪽, 남는 쪽, 대칭축)
     "L": ("왼쪽을 오른쪽으로", "v"), "R": ("오른쪽을 왼쪽으로", "v"),
     "T": ("위쪽을 아래쪽으로", "h"), "B": ("아래쪽을 위쪽으로", "h"),
 }
-FOLD_LEVELS = {1: [["L"], ["T"], ["R"], ["B"], ["L"], ["T"]],
-               2: [["L", "T"], ["T", "R"], ["R", "B"], ["B", "L"], ["L", "B"], ["T", "L"]]}
+_TWO = [["L", "T"], ["T", "R"], ["R", "B"], ["B", "L"], ["L", "B"], ["T", "L"]]
+FOLD_LEVELS = {1: [["L"], ["T"], ["R"], ["B"], ["L"], ["T"]], 2: _TWO, 3: _TWO,
+               4: [["L", "T", "L"], ["T", "L", "T"], ["R", "B", "R"], ["B", "R", "B"], ["L", "B", "L"], ["T", "R", "T"]]}
+PUNCHES = {1: 1, 2: 1, 3: 2, 4: 1}  # 3: 두 번 접고 구멍 2개, 4: 세 번 접기(구멍 8개)
 
 
 def _visible(folds: list[str]) -> tuple[range, range]:
@@ -40,11 +42,18 @@ def _visible(folds: list[str]) -> tuple[range, range]:
 
 
 def _unfold(holes: set, folds: list[str], axes: list[str] | None = None) -> frozenset:
-    """접은 순서의 역순으로 펼치며 대칭 구멍을 추가한다. axes로 축을 바꿔 오답을 만든다."""
+    """접은 순서의 역순으로 펼치며, 그 접기 직전 종이의 가운데 선을 기준으로 대칭 구멍을 추가한다.
+
+    axes(접은 순서대로)로 대칭축을 바꿔 오답을 만든다.
+    """
     holes = set(holes)
-    for i, f in enumerate(reversed(folds)):
-        axis = (axes or [FOLDS[x][1] for x in reversed(folds)])[i]
-        holes |= {(N - 1 - c, r) if axis == "v" else (c, N - 1 - r) for c, r in holes}
+    for i in reversed(range(len(folds))):
+        cols, rows = _visible(folds[:i])
+        axis = axes[i] if axes else FOLDS[folds[i]][1]
+        if axis == "v":
+            holes |= {(cols.start + cols.stop - 1 - c, r) for c, r in holes}
+        else:
+            holes |= {(c, rows.start + rows.stop - 1 - r) for c, r in holes}
     return frozenset(holes)
 
 
@@ -95,13 +104,13 @@ def paper_fold_item(item: Item) -> Item:
     folds: list[str] = pick_variant(spec, FOLD_LEVELS[spec["level"]])
     cols, rows = _visible(folds)
     region = [(c, r) for c in cols for r in rows]
-    punches = set(rng.sample(region, 2 if len(folds) == 1 and rng.random() < .5 else 1))
+    punches = set(rng.sample(region, min(PUNCHES[spec["level"]], len(region))))
     ans = _unfold(punches, folds)
 
     other = {"v": "h", "h": "v"}
-    wrong = [frozenset(punches), _unfold(punches, folds, [other[FOLDS[f][1]] for f in reversed(folds)])]
-    if len(folds) == 2:
-        wrong += [_unfold(punches, folds[:1]), _unfold(punches, folds[1:])]
+    wrong = [frozenset(punches), _unfold(punches, folds, [other[FOLDS[f][1]] for f in folds])]
+    if len(folds) >= 2:  # 마지막(또는 처음) 접기를 빼먹고 펼친 경우
+        wrong += [_unfold(punches, folds[:-1]), _unfold(punches, folds[1:])]
     else:
         wrong += [_unfold(punches, folds + ["T" if FOLDS[folds[0]][1] == "v" else "L"])]
     for dc, dr in ((1, 0), (0, 1), (1, 1), (-1, 0), (0, -1)):  # 구멍 위치를 한 칸 잘못 본 경우
@@ -183,18 +192,7 @@ def _glyph(sym: str, cx: float, cy: float, r: float) -> str:
     return _shape(sym, cx, cy, r, INK, 0)
 
 
-def cube_net_item(item: Item) -> Item:
-    spec = item.svg
-    rng = random.Random(spec["seed"])
-    net = _random_net(rng, long_row=spec["level"] == 2)
-    normals = fold_cube(net)
-    cells = sorted(net)
-    syms = dict(zip(cells, rng.sample(FACE_SYMBOLS, 6)))
-    ask = rng.choice(cells)
-    opposite = next(c for c in cells if normals[c] == _neg(normals[ask]))
-    adjacent = [c for c in cells if c not in (ask, opposite)]
-    options = [syms[opposite], *[syms[c] for c in rng.sample(adjacent, 3)]]
-
+def _net_svg(cells: list, syms: dict, ask=None) -> str:
     u = 56
     w, h = (max(x for x, _ in cells) + 1) * u, (max(y for _, y in cells) + 1) * u
     body = ""
@@ -203,9 +201,52 @@ def cube_net_item(item: Item) -> Item:
         fill = "#fef9c3" if c == ask else "#ffffff"
         body += (f'<rect x="{x + 1}" y="{y + 1}" width="{u - 2}" height="{u - 2}" fill="{fill}" '
                  f'stroke="{INK}" stroke-width="1.5"/>' + _glyph(syms[c], x + u / 2, y + u / 2, u * .28))
+    return _svg(w, h, body)
+
+
+def _cube_pairs_item(item: Item, rng: random.Random, net: Cells, normals: dict) -> Item:
+    """매우 어려움: 보기 중 서로 마주 보는 두 면의 짝을 고른다."""
+    cells = sorted(net)
+    syms = dict(zip(cells, rng.sample(FACE_SYMBOLS, 6)))
+    opposite = [(a, b) for i, a in enumerate(cells) for b in cells[i + 1:] if normals[a] == _neg(normals[b])]
+    adjacent = [(a, b) for i, a in enumerate(cells) for b in cells[i + 1:] if (a, b) not in opposite]
+    options = [rng.choice(opposite), *rng.sample(adjacent, 3)]
+    pair_svg = [_svg(120, 60, _glyph(syms[a], 30, 30, 20) + _glyph(syms[b], 90, 30, 20) +
+                     f'<line x1="52" y1="30" x2="68" y2="30" stroke="{INK}" stroke-width="2"/>') for a, b in options]
+    order = rng.sample(range(4), 4)
+    a, b = options[0]
+    return replace(item, stem_svg=_net_svg(cells, syms), choices=[pair_svg[i] for i in order], answer=order.index(0),
+                   prompt="전개도를 접어 정육면체를 만들 때, 서로 마주 보게 되는 두 면은?",
+                   explanation=f"접으면 {FACE_KO[syms[a]]} 면과 {FACE_KO[syms[b]]} 면이 서로 맞은편에 옵니다. "
+                               "나머지 짝은 모서리를 맞대는 이웃한 면입니다.",
+                   params={**item.params, "net": cells})
+
+
+def cube_net_item(item: Item) -> Item:
+    """1: 1-4-1형, 긴 줄의 면을 물음 / 2: 1-4-1형, 아무 면 / 3: 그 밖의 전개도 / 4: 마주 보는 면의 짝 고르기"""
+    spec = item.svg
+    rng = random.Random(spec["seed"])
+    level = spec["level"]
+    net = _random_net(rng, long_row=level <= 2)
+    normals = fold_cube(net)
+    if level == 4:
+        return _cube_pairs_item(item, rng, net, normals)
+    cells = sorted(net)
+    syms = dict(zip(cells, rng.sample(FACE_SYMBOLS, 6)))
+    if level == 1:
+        rows = {y: [c for c in cells if c[1] == y] for y in {c[1] for c in cells}}
+        cols = {x: [c for c in cells if c[0] == x] for x in {c[0] for c in cells}}
+        line = next(v for v in [*rows.values(), *cols.values()] if len(v) == 4)
+        ask = rng.choice(line)
+    else:
+        ask = rng.choice(cells)
+    opposite = next(c for c in cells if normals[c] == _neg(normals[ask]))
+    adjacent = [c for c in cells if c not in (ask, opposite)]
+    options = [syms[opposite], *[syms[c] for c in rng.sample(adjacent, 3)]]
+
     order = rng.sample(range(4), 4)
     glyph_svg = [_svg(60, 60, _glyph(options[i], 30, 30, 20)) for i in order]
-    return replace(item, stem_svg=_svg(w, h, body), choices=glyph_svg, answer=order.index(0),
+    return replace(item, stem_svg=_net_svg(cells, syms, ask), choices=glyph_svg, answer=order.index(0),
                    prompt=f"전개도를 접어 정육면체를 만들 때, {FACE_KO[syms[ask]]} 면(노란 칸)과 마주 보는 면은?",
                    explanation=f"접으면 {FACE_KO[syms[ask]]} 면의 맞은편에는 {FACE_KO[syms[opposite]]} 면이 옵니다. "
                                f"나머지 보기는 {FACE_KO[syms[ask]]} 면과 모서리를 맞대는 옆면입니다.",
@@ -243,6 +284,10 @@ def assembly_item(item: Item) -> Item:
     correct = _rotate(nb, rng.choice([1, 2, 3]))
     forbidden = {_rotate(nb, k) for k in range(4)}
     wrong = [_rotate(_mirror(nb), rng.randrange(4))]
+    if spec.get("easy"):  # 쉬움: 칸 수가 하나 많은, 세어 보면 바로 걸러지는 오답을 하나 넣는다
+        x, y = rng.choice(sorted(nb))
+        extra = [(x + dx, y + dy) for dx, dy in NEIGHBORS if (x + dx, y + dy) not in nb]
+        wrong.append(_rotate(_norm(set(nb) | {rng.choice(extra)}), rng.randrange(4)))
     while len(wrong) < 3:
         cand = _near_miss(nb, forbidden | {_rotate(w, k) for w in wrong for k in range(4)}, rng)
         wrong.append(_rotate(cand, rng.randrange(4)))

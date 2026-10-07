@@ -32,7 +32,8 @@ ss = st.session_state
 mode, seed = ss.mode, ss.form_seed
 items = {it.id: it for it in get_items()}
 if ss.get("exam") is None:
-    ss.exam = ex.new_exam(build_form(list(items.values()), seed, mode), mode)
+    seen = db.seen_items(get_engine(), ss.series_id) if ss.get("round", 1) > 1 else set()
+    ss.exam = ex.new_exam(build_form(list(items.values()), seed, mode, exclude=seen), mode)
 exam = ss.exam
 domain = ex.current_domain(exam)
 spec = BLUEPRINT[domain]
@@ -63,12 +64,15 @@ def go_to(i: int) -> None:
 
 step = f"{exam['d'] + 1}/{len(exam['domains'])}"
 if exam["stage"] == "intro":
-    st.caption(f"{MODE_LABELS[mode]} · 영역 {step}")
+    round_text = f" · {ss.round}라운드" if ss.get("round", 1) > 1 else ""
+    st.caption(f"{MODE_LABELS[mode]}{round_text} · 영역 {step}")
     st.subheader(spec.label)
     limit = ex.domain_time_limit(domain, mode)
     with st.container(border=True):
         st.markdown(INTROS[domain])
-        facts = [f"**{len(ids)}문항**" if domain is not Domain.GS else "**1블록**"]
+        facts = [f"**{spec.length_for(mode)}문항**" if domain is not Domain.GS else "**1블록**"]
+        if exam["panels"].get(domain.value):
+            facts.append("앞 문제들의 결과에 따라 뒤 문제의 난이도가 정해집니다")
         if limit:
             facts.append(f"제한시간 **{limit // 60}분{f' {limit % 60}초' if limit % 60 else ''}**")
             facts.append("시간이 끝나면 자동으로 다음 영역으로 넘어갑니다")
@@ -93,7 +97,8 @@ item = items[ids[exam["i"]]]
 if notice := ss.pop("notice", None):
     st.toast(notice, icon=":material/warning:")
 with st.container(horizontal=True, vertical_alignment="center"):
-    st.markdown(f"**{spec.label}** · {exam['i'] + 1} / {len(ids)}")
+    stage = (" · 2단계" if domain.value in exam["path"] else " · 1단계") if exam["panels"].get(domain.value) else ""
+    st.markdown(f"**{spec.label}**{stage} · {exam['i'] + 1} / {spec.length_for(mode)}")
     if exam["deadline"]:
         remaining = int((exam["deadline"] - time.time()) * 1000)
         total = ex.domain_time_limit(domain, mode) * 1000
@@ -117,18 +122,21 @@ if item.format is ItemFormat.MCQ:
         save_progress()
 
     st.space("small")
-    answered = [i for i, x in enumerate(ids) if x in exam["answers"]]
+    start = ex.stage_start(exam)  # 2단계로 넘어가면 1단계 문항으로는 돌아갈 수 없다
+    stage_idx = list(range(start, len(ids)))
+    answered = [i for i in stage_idx if ids[i] in exam["answers"]]
     last = exam["i"] == len(ids) - 1
+    to_stage2 = ex.has_stage2(exam)
     with st.container(horizontal=True):
-        st.button("이전", icon=":material/arrow_back:", disabled=exam["i"] == 0,
+        st.button("이전", icon=":material/arrow_back:", disabled=exam["i"] == start,
                   on_click=go_to, args=(exam["i"] - 1,))
         if not last:
             st.button("다음", type="primary", icon=":material/arrow_forward:", on_click=go_to, args=(exam["i"] + 1,))
-        elif st.button("영역 제출", type="primary", icon=":material/check:"):
+        elif st.button("1단계 제출" if to_stage2 else "영역 제출", type="primary", icon=":material/check:"):
             ss.confirm_submit = True
 
     jump = st.pills(
-        "문항 이동", options=list(range(len(ids))), selection_mode="single", default=exam["i"],
+        "문항 이동", options=stage_idx, selection_mode="single", default=exam["i"],
         format_func=lambda k: f"{k + 1}{' ✓' if k in answered else ''}", key=f"jump-{exam['d']}-{exam['i']}",
     )
     if jump is not None and jump != exam["i"]:
@@ -136,20 +144,28 @@ if item.format is ItemFormat.MCQ:
         st.rerun()
 
     if ss.get("confirm_submit"):
-        missing = len(ids) - len(answered)
+        missing = len(stage_idx) - len(answered)
 
-        @st.dialog("영역을 제출할까요?")
+        @st.dialog("1단계를 제출할까요?" if to_stage2 else "영역을 제출할까요?")
         def confirm():
+            back = "1단계 문항" if to_stage2 else "이 영역"
             if missing:
-                st.warning(f"답하지 않은 문항이 {missing}개 있습니다. 제출하면 다시 돌아올 수 없습니다.")
+                st.warning(f"답하지 않은 문항이 {missing}개 있습니다. 제출하면 {back}으로 다시 돌아올 수 없습니다.")
             else:
-                st.write("제출하면 이 영역으로 다시 돌아올 수 없습니다.")
+                st.write(f"제출하면 {back}으로 다시 돌아올 수 없습니다.")
+            if to_stage2:
+                st.caption("1단계 결과에 따라 이어서 풀 문제의 난이도가 정해집니다. 제한시간은 그대로 이어집니다.")
             with st.container(horizontal=True):
                 if st.button("계속 풀기"):
                     ss.confirm_submit = False
                     st.rerun()
                 if st.button("제출", type="primary"):
                     ss.confirm_submit = False
+                    if to_stage2:
+                        ex.track_time(exam, ids[exam["i"]])
+                        ex.route_domain(exam, items, seed)
+                        save_progress()
+                        st.rerun()
                     close_domain()
 
         confirm()
@@ -186,6 +202,10 @@ else:
     if done:
         if exam["i"] < len(ids) - 1:
             exam["i"] += 1
+            save_progress()
+            st.rerun()
+        if ex.has_stage2(exam):
+            ex.route_domain(exam, items, seed)
             save_progress()
             st.rerun()
         close_domain()

@@ -158,6 +158,16 @@ def _rule_grid(attr: str, rule: str, rng: random.Random) -> list[list]:
     if rule == "prog" and attr == "rot":
         step = rng.choice([1, -1])
         return [[vals[(s + c * step) % 4] for c in range(3)] for s in rng.sample(range(4), 3)]
+    if rule == "add" and attr == "count":
+        # 셋째 칸 = 첫째 + 둘째. 등차(1,2,3)나 같은 수 두 배(2,2,4)로도 읽히는 행만으로 구성하지 않는다
+        while True:
+            rows = []
+            while len(rows) < 3:
+                a, b = rng.randint(1, 3), rng.randint(1, 3)
+                if a + b <= 5 and (a, b) not in rows:
+                    rows.append((a, b))
+            if any(a != b and b != 2 * a for a, b in rows[:2]):
+                return [[a, b, a + b] for a, b in rows]
     raise ValueError(f"지원하지 않는 규칙 {attr}:{rule}")
 
 
@@ -167,6 +177,8 @@ def _rule_text(attr: str, rule: str, grid: list[list]) -> str:
         return f"{topic} 한 행 안에서 모두 같고 행마다 다릅니다."
     if rule == "dist":
         return f"{topic} 각 행에 세 가지가 한 번씩 나옵니다."
+    if rule == "add":
+        return "각 행에서 셋째 칸의 개수는 앞의 두 칸 개수를 더한 값입니다."
     if attr == "count":
         return "개수는 오른쪽으로 갈수록 1개씩 늘어납니다."
     clockwise = (grid[0][1] - grid[0][0]) % 360 == 90
@@ -190,6 +202,9 @@ MATRIX_LEVELS: dict[int, list[dict[str, str]]] = {
     3: [{"shape": "dist", "count": "prog", "fill": "dist"}, {"rot": "prog", "count": "dist", "fill": "dist"},
         {"shape": "dist", "count": "dist", "fill": "dist"}, {"rot": "prog", "count": "prog", "fill": "dist"},
         {"shape": "const", "count": "dist", "fill": "dist"}, {"shape": "dist", "count": "prog", "fill": "const"}],
+    4: [{"count": "add", "shape": "dist", "fill": "dist"}, {"count": "add", "rot": "prog", "fill": "dist"},
+        {"count": "add", "shape": "dist", "fill": "const"}, {"count": "add", "rot": "prog", "fill": "const"},
+        {"count": "add", "shape": "const", "fill": "dist"}, {"count": "add", "rot": "dist", "fill": "dist"}],
 }
 
 
@@ -225,7 +240,10 @@ def _matrix_item(item: Item) -> Item:
         if attr in rules:
             g = grids[attr]
             cands = {"const": [g[0][2], g[1][2]], "dist": [g[2][0], g[2][1]]}.get(rules[attr])
-            if cands is None:  # prog: 바로 앞 칸 값 또는 한 단계 더 간 값
+            if rules[attr] == "add":  # 더하기 대신 빼거나 하나 어긋난 값
+                a, b, c = g[2]
+                cands = [v for v in (abs(a - b), c + 1, c - 1, b + 1) if 1 <= v <= 5]
+            elif cands is None:  # prog: 바로 앞 칸 값 또는 한 단계 더 간 값
                 if attr == "count":
                     cands = [g[2][1]] + ([g[2][2] + 1] if g[2][2] < 5 else [])
                 else:
@@ -357,12 +375,12 @@ def _rotation_item(item: Item) -> Item:
     k = rng.choice([1, 2, 3])
     correct = _rotate(shape, k)
     mirrors = [_rotate(_mirror(shape), j) for j in rng.sample(range(4), 3)]
-    near = spec.get("near_miss", False)
-    if near:
-        forbidden = {_rotate(shape, j) for j in range(4)} | {_rotate(_mirror(shape), j) for j in range(4)}
-        options = [correct, mirrors[0], mirrors[1], _near_miss(correct, forbidden, rng)]
-    else:
-        options = [correct, *mirrors]
+    near = int(spec.get("near_miss", 0))  # 한 칸 어긋난 오답 개수 (True는 1개)
+    options = [correct, *mirrors[:3 - near]]
+    forbidden = {_rotate(shape, j) for j in range(4)} | {_rotate(_mirror(shape), j) for j in range(4)}
+    while len(options) < 4:
+        miss = _near_miss(correct, forbidden | {_rotate(o, k) for o in options for k in range(4)}, rng)
+        options.append(_rotate(miss, rng.randrange(4)))
     assert len(set(options)) == 4, item.id
 
     order = rng.sample(range(4), 4)

@@ -1,5 +1,6 @@
 import base64
 import json
+import random
 from datetime import date
 
 import streamlit as st
@@ -8,8 +9,8 @@ from core import charts, db
 from core import components as ui
 from core import exam as ex
 from core import scoring as sc
-from core.runtime import get_engine, get_items
-from core.schema import BLUEPRINT, DIFFICULTY_LABELS, MODE_LABELS, Domain, ItemFormat, Mode
+from core.runtime import APP_VERSION, get_engine, get_items
+from core.schema import BLUEPRINT, DIFFICULTY_LABELS, MAX_ROUNDS, MODE_LABELS, Domain, ItemFormat, Mode
 
 ss = st.session_state
 if ss.phase != "result":
@@ -25,8 +26,30 @@ def load_norm(mode: str) -> sc.Norm:
 exam, mode, seed = ss.exam, Mode(ss.mode), ss.form_seed
 items = {it.id: it for it in get_items()}
 domains = [Domain(d) for d in exam["domains"]]
-rows = [r for d in domains for r in ex.domain_rows(exam, items, d, seed)]
-per, total = sc.estimate(rows, items)
+rows = [r for d in domains for r in ex.domain_rows(exam, items, d, seed)]  # 이번 라운드
+this_per, this_total = sc.estimate(rows, items)
+
+if not ss.get(f"saved-{ss.session_id}"):
+    db.complete_session(
+        get_engine(), ss.session_id,
+        raw_scores={d.value: e.raw for d, e in this_per.items()},
+        domain_index={d.value: round(e.index, 1) for d, e in this_per.items()},
+        ltr_index=round(this_total.index, 1), percentile=round(sc.percentile(this_total.theta), 1),
+        thetas={"total": this_total.theta, **{d.value: e.theta for d, e in this_per.items()}},
+        focus_lost=exam.get("blurs", 0),
+    )
+    ss[f"saved-{ss.session_id}"] = True
+
+# 같은 묶음에서 끝낸 라운드를 모두 합쳐 추정한다 (문항이 늘수록 오차가 줄어든다)
+series = [r for r in db.series_sessions(get_engine(), ss.series_id) if r["completed_at"] and r["progress"]]
+all_rows, round_scores = [], []
+for r in series:
+    prog = r["progress"]
+    rrows = [x for d in prog["domains"] for x in ex.domain_rows(prog, items, Domain(d), r["form_seed"])]
+    all_rows += rrows
+    round_scores.append((r["round"], sc.estimate(rrows, items)[1]))
+n_rounds = len(round_scores)
+per, total = sc.estimate(all_rows or rows, items)
 norm = load_norm(mode.value)
 
 z = norm.z(total.theta)
@@ -39,17 +62,6 @@ for d, est in per.items():
     dsd = (norm.domain or {}).get(d.value, (0, 1))[1] if norm.empirical else 1.0
     dom[d] = {"index": sc.to_index(dz), "se": 15 * est.se / dsd, "raw": est.raw, "n": est.n_items}
 
-if not ss.get(f"saved-{ss.session_id}"):
-    db.complete_session(
-        get_engine(), ss.session_id,
-        raw_scores={d.value: v["raw"] for d, v in dom.items()},
-        domain_index={d.value: round(sc.to_index(per[d].theta), 1) for d in per},
-        ltr_index=round(sc.to_index(total.theta), 1), percentile=round(sc.percentile(total.theta), 1),
-        thetas={"total": total.theta, **{d.value: e.theta for d, e in per.items()}},
-        focus_lost=exam.get("blurs", 0),
-    )
-    ss[f"saved-{ss.session_id}"] = True
-
 # ---------------------------------------------------------------- 종합 점수
 
 def _pct_text(p: float) -> str:
@@ -58,7 +70,8 @@ def _pct_text(p: float) -> str:
 
 # 평균 이상이면 '상위', 아래면 '하위'로 읽기 쉽게
 position = f"상위 {_pct_text(100 - pct)}%" if pct >= 50 else f"하위 {_pct_text(pct)}%"
-st.caption(f"{MODE_LABELS[mode]} · {date.today():%Y.%m.%d}")
+rounds_text = f" · {n_rounds}라운드 합산" if n_rounds > 1 else ""
+st.caption(f"{MODE_LABELS[mode]}{rounds_text} · {date.today():%Y.%m.%d}")
 st.title("검사 결과")
 with st.container(border=True):
     with st.container(horizontal=True):
@@ -72,6 +85,15 @@ with st.container(border=True):
         f"**IQ 척도로는 약 {index:.0f}**에 해당합니다."
     )
     st.altair_chart(charts.distribution_chart(index))
+    if n_rounds > 1:
+        st.markdown("**라운드별 점수** · 문항을 겹치지 않게 다시 풀어 합칠수록 오차 범위가 좁아집니다.")
+        st.dataframe({
+            "라운드": [f"{k}라운드" for k, _ in round_scores] + ["합산"],
+            "지수": [round(sc.to_index(norm.z(e.theta))) for _, e in round_scores] + [round(index)],
+            "90% 범위 폭": [f"±{sc.CI_Z * 15 * e.se / norm.sd:.0f}" for _, e in round_scores]
+                         + [f"±{sc.CI_Z * se_points:.0f}"],
+        }, hide_index=True)
+        st.caption("뒤 라운드는 문제 유형에 익숙해져 점수가 조금 오를 수 있습니다. 상위 % 기준은 1라운드 응시자로만 만듭니다.")
     if norm.empirical:
         st.caption(f"점수 기준: 이 검사를 처음 응시한 {norm.n:,}명의 실제 분포")
     else:
@@ -95,7 +117,7 @@ with st.container(horizontal=True):
         st.markdown("**상대적 강점**")
         if strong:
             for d, gap in strong:
-                st.markdown(f":material/trending_up: **{BLUEPRINT[d].label}** — {sc.ABILITY_TEXT[d]}가 "
+                st.markdown(f":material/trending_up: **{BLUEPRINT[d].label}** — {sc.ABILITY_TEXT[d]}이 "
                             f"다른 영역 평균보다 {gap:.0f}점 높습니다.")
         else:
             st.markdown("뚜렷하게 앞서는 영역 없이 고르게 나타났습니다.")
@@ -103,7 +125,7 @@ with st.container(horizontal=True):
         st.markdown("**상대적 약점**")
         if weak:
             for d, gap in weak:
-                st.markdown(f":material/trending_down: **{BLUEPRINT[d].label}** — {sc.ABILITY_TEXT[d]}가 "
+                st.markdown(f":material/trending_down: **{BLUEPRINT[d].label}** — {sc.ABILITY_TEXT[d]}이 "
                             f"다른 영역 평균보다 {-gap:.0f}점 낮습니다.")
         else:
             st.markdown("뚜렷하게 처지는 영역이 없습니다.")
@@ -113,6 +135,8 @@ table = {
     "맞힌 문항": [f"{dom[d]['raw']:g} / {dom[d]['n']}" if d is not Domain.GS else f"{dom[d]['raw']:g}점" for d in order],
     "지수": [round(dom[d]["index"]) for d in order],
     "90% 범위": [f"{r['하한']:.0f}–{r['상한']:.0f}" for r in profile_rows],
+    "2단계": [{"easy": "쉬운 묶음", "mid": "중간 묶음", "hard": "어려운 묶음"}.get(exam["path"].get(d.value), "–")
+             for d in order],
     "측정 능력": [sc.ABILITY_TEXT[d] for d in order],
 }
 st.dataframe(table, hide_index=True)
@@ -187,9 +211,25 @@ if exam.get("blurs"):
     st.caption(f"검사 중 다른 탭이나 창으로 {exam['blurs']}번 이동한 기록이 있습니다.")
 
 
+if ss.round < MAX_ROUNDS and ss.round == max((k for k, _ in round_scores), default=ss.round):
+    with st.container(border=True):
+        st.markdown(f"**정확도 높이기** · 지금까지 나온 문제와 겹치지 않는 새 문제로 한 번 더 풉니다 "
+                    f"({ss.round + 1}/{MAX_ROUNDS}라운드, 약 {15 if mode is Mode.QUICK else 35}분). "
+                    "결과는 모든 라운드를 합쳐 다시 계산합니다.")
+        if st.button("다른 문제로 한 번 더", type="primary", icon=":material/replay:"):
+            new_seed = random.randrange(2**31)
+            ss.round += 1
+            ss.form_seed = new_seed
+            ss.exam = None
+            ss.session_id = db.start_session(get_engine(), ss.client_id, mode.value, new_seed, APP_VERSION,
+                                             series_id=ss.series_id, round_no=ss.round)
+            ss.phase = "test"
+            st.switch_page("app_pages/test.py")
+
 if st.button("처음으로", icon=":material/restart_alt:"):
-    for k in ("exam", "session_id", "form_seed", "mode"):
+    for k in ("exam", "session_id", "form_seed", "mode", "series_id"):
         ss[k] = None
+    ss.round = 1
     ss.phase = "intro"
     st.query_params.clear()
     st.switch_page("app_pages/home.py")

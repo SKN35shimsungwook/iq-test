@@ -9,17 +9,21 @@ import json
 import random
 import time
 
-from core.schema import BLUEPRINT, Domain, Item, ItemFormat, Mode
+from core.schema import BLUEPRINT, Domain, Item, ItemFormat, Mode, route
 
 SYMBOLS = ["◆", "▲", "●", "■", "★", "✚", "◐", "♥", "☾"]
 EXPIRY_SLACK_SEC = 1.0  # 브라우저 타이머가 서버보다 조금 먼저 끝나는 차이를 흡수
 ABORTED_GS = json.dumps({"correct": 0, "wrong": 0, "aborted": True})  # 진행 중 새로고침한 처리속도 블록
 
 
-def new_exam(form: dict[Domain, list[Item]], mode: Mode) -> dict:
+def new_exam(form: dict, mode: Mode) -> dict:
+    """form: item_bank.build_form 결과 (영역 → DomainForm)."""
     return {
         "domains": [d.value for d in form],
-        "items": {d.value: [it.id for it in items] for d, items in form.items()},
+        "items": {d.value: [it.id for it in f.stage1] for d, f in form.items()},  # 지금까지 확정된 출제 순서
+        "panels": {d.value: {p: [it.id for it in its] for p, its in f.panels.items()} for d, f in form.items()},
+        "stage1_n": {d.value: len(f.stage1) for d, f in form.items()},
+        "path": {},        # domain → 2단계 묶음 (easy | mid | hard)
         "d": 0,            # 현재 영역 인덱스
         "stage": "intro",  # intro | items
         "i": 0,            # 현재 문항 인덱스
@@ -41,6 +45,30 @@ def current_domain(exam: dict) -> Domain:
 def domain_time_limit(domain: Domain, mode: Mode) -> int:
     """영역 제한시간(초). 처리속도는 컴포넌트가 직접 시간을 재므로 0."""
     return 0 if domain is Domain.GS else BLUEPRINT[domain].time_for(mode)
+
+
+def has_stage2(exam: dict) -> bool:
+    """현재 영역에 아직 고르지 않은 2단계 묶음이 있는가."""
+    d = exam["domains"][exam["d"]]
+    return bool(exam["panels"].get(d)) and d not in exam["path"]
+
+
+def stage_start(exam: dict) -> int:
+    """현재 단계의 첫 문항 인덱스 (2단계로 넘어가면 1단계 문항으로는 돌아갈 수 없다)."""
+    d = exam["domains"][exam["d"]]
+    return exam["stage1_n"][d] if d in exam["path"] else 0
+
+
+def route_domain(exam: dict, items: dict[str, Item], seed: int) -> str:
+    """1단계 정답 수로 2단계 묶음을 골라 출제 목록 뒤에 붙인다."""
+    d = exam["domains"][exam["d"]]
+    stage1 = exam["items"][d][: exam["stage1_n"][d]]
+    correct = sum(score_item(items[i], exam["answers"].get(i), seed)[0] for i in stage1)
+    panel = route(correct, len(stage1))
+    exam["path"][d] = panel
+    exam["items"][d] = stage1 + exam["panels"][d][panel]
+    exam["i"] = len(stage1)
+    return panel
 
 
 def start_domain(exam: dict, mode: Mode, now: float | None = None) -> None:

@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.item_bank import items_by_slot, load_items, validate_blueprint, validate_bank  # noqa: E402
-from core.schema import BLUEPRINT, MIN_FORMS  # noqa: E402
+from core.schema import BLUEPRINT, DIFFICULTY_LABELS, MIN_FORMS, SLOTS  # noqa: E402
 
 sys.stdout.reconfigure(encoding="utf-8")
 strict = "--strict" in sys.argv
@@ -22,11 +22,11 @@ if strict:
 pool = items_by_slot(items)
 print(f"문항 {len(items)}개 (4지선다 슬롯당 최소 {MIN_FORMS}개)")
 for domain, spec in BLUEPRINT.items():
-    print(f"\n{spec.label} ({domain.value})")
-    for s in spec.slots:
-        have = len(pool.get(s.id, []))
-        mark = "빠른" if s.quick else "    "
-        print(f"  {s.id:<7} {mark} {s.subtype:<14} 난이도{s.difficulty}  동형 {have}")
+    n = sum(len(pool.get(sid, [])) for sid in spec.slot_ids)
+    print(f"\n{spec.label} ({domain.value}) · 슬롯 {len(spec.slot_ids)}개 · 문항 {n}개")
+    for sid in sorted(spec.slot_ids, key=lambda x: (SLOTS[x].subtype, SLOTS[x].difficulty)):
+        slot = SLOTS[sid]
+        print(f"  {sid:<22} {DIFFICULTY_LABELS[slot.difficulty]:<6} 동형 {len(pool.get(sid, []))}")
 
 if shortage and not strict:
     print(f"\n동형 부족 슬롯 {len(shortage)}개 (--strict 에서만 실패)")

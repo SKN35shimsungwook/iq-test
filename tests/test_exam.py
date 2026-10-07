@@ -31,15 +31,15 @@ def test_scoring_by_format():
     assert ex.score_item(mcq, str((mcq.answer + 1) % 4), 1) == (False, 0.0)
     assert ex.score_item(mcq, None, 1) == (False, 0.0)
 
-    ds = BY_ID["gwm-03a"]
+    ds = BY_ID["gwm-backward-1a"]
     assert ex.score_item(ds, ex.wm_stimulus(ds, 9)["expected"], 9) == (True, 1.0)
 
-    gs = BY_ID["gs-01a"]
+    gs = BY_ID["gs-symbol_coding-2a"]
     assert ex.score_item(gs, json.dumps({"correct": 40, "wrong": 3}), 1) == (True, 37.0)
     assert ex.score_item(gs, json.dumps({"correct": 2, "wrong": 5}), 1) == (False, 0.0)
 
 
-def test_exam_flow_times_out_and_finishes():
+def test_exam_flow_routes_times_out_and_finishes():
     form = build_form(ITEMS, 7, Mode.QUICK)
     state = ex.new_exam(form, Mode.QUICK)
     assert state["domains"] == ["gf", "gc", "gq", "gv", "gwm"]
@@ -49,16 +49,27 @@ def test_exam_flow_times_out_and_finishes():
     assert not ex.is_expired(state, now=1100.0)
     assert ex.is_expired(state, now=1000.0 + 4 * 60 - 0.5)  # 브라우저 타이머 오차 허용
 
-    first = state["items"]["gf"][0]
-    state["answers"][first] = str(BY_ID[first].answer)
-    ex.track_time(state, first, now=1012.5)
-    assert state["ms"][first] == 12500
+    # 1단계 2문항을 모두 맞히면 어려운 묶음으로
+    stage1 = list(state["items"]["gf"])
+    assert len(stage1) == 2 and ex.has_stage2(state) and ex.stage_start(state) == 0
+    for i in stage1:
+        state["answers"][i] = str(BY_ID[i].answer)
+    ex.track_time(state, stage1[0], now=1012.5)
+    assert state["ms"][stage1[0]] == 12500
+    assert ex.route_domain(state, BY_ID, 7) == "hard"
+    assert state["i"] == 2 and ex.stage_start(state) == 2 and not ex.has_stage2(state)
+    hard = state["items"]["gf"][2:]
+    assert [BY_ID[i].slot for i in hard] == [it.slot for it in form[Domain.GF].panels["hard"]]
+    assert all(BY_ID[i].difficulty >= 3 for i in hard)
 
     rows = ex.domain_rows(state, BY_ID, Domain.GF, 7)
-    assert len(rows) == 4 and rows[0]["correct"] and sum(r["score"] for r in rows) == 1
-    assert rows[1]["answer"] is None and not rows[1]["correct"]
+    assert len(rows) == 4 and sum(r["score"] for r in rows) == 2
     assert ex.finish_domain(state, rows) is False
-    assert state["raw"]["gf"] == 1 and state["stage"] == "intro" and state["d"] == 1
+    assert state["raw"]["gf"] == 2 and state["stage"] == "intro" and state["d"] == 1
+
+    # 다음 영역은 1단계를 모두 틀려 쉬운 묶음으로
+    assert ex.route_domain(state, BY_ID, 7) == "easy"
+    assert all(BY_ID[i].difficulty <= 2 for i in state["items"]["gc"][2:])
 
     for _ in range(4):
         d = ex.current_domain(state)
@@ -73,5 +84,5 @@ def test_gs_and_wm_have_no_domain_deadline():
 
 
 def test_aborted_speed_block_scores_zero():
-    assert ex.score_item(BY_ID["gs-01a"], ex.ABORTED_GS, 1) == (False, 0.0)
-    assert ex.score_item(BY_ID["gwm-01a"], "", 1) == (False, 0.0)
+    assert ex.score_item(BY_ID["gs-symbol_coding-2a"], ex.ABORTED_GS, 1) == (False, 0.0)
+    assert ex.score_item(BY_ID["gwm-forward-1a"], "", 1) == (False, 0.0)

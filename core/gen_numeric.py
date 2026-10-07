@@ -90,12 +90,78 @@ def _series(kind: str, rng: random.Random) -> tuple[list[int], int, list[int], s
             s.append(s[-1] * m + c)
         sign = f"{josa(c, '을/를')} 더하는" if c > 0 else f"{josa(-c, '을/를')} 빼는"
         return s[:5], s[5], [s[4] * m, s[5] + 2 * c, s[4] * m - c * 3], f"앞의 수에 {josa(m, '을/를')} 곱하고 {sign} 규칙입니다."
+    # ---- 어려움
+    if kind in ("alt_ops", "alt_ops3x"):
+        a, p, m = rng.randint(2, 6), rng.randint(2, 5), 2 if kind == "alt_ops" else 3
+        s = [a]
+        for i in range(6):
+            s.append(s[-1] + p if i % 2 == 0 else s[-1] * m)
+        return s[:6], s[6], [s[5] + p, s[5] * m + p, s[6] + m], f"+{p}와 ×{m}를 번갈아 적용합니다."
+    if kind == "products":
+        m = rng.randint(1, 3)
+        s = [n * (n + 1) for n in range(m, m + 6)]
+        return s[:5], s[5], [s[4] + (s[4] - s[3]), s[5] + 2, (m + 5) ** 2], "연속한 두 자연수의 곱(n × (n+1))입니다."
+    if kind == "fib3":
+        s = [rng.randint(1, 3) for _ in range(3)]
+        while len(s) < 7:
+            s.append(s[-1] + s[-2] + s[-3])
+        return s[:6], s[6], [s[5] + s[4], s[6] + 1, s[5] * 2], "앞의 세 수를 더하면 다음 수가 됩니다."
+    if kind == "geom_diff":
+        a, d = rng.randint(1, 9), rng.randint(1, 2)
+        s = [a]
+        for i in range(5):
+            s.append(s[-1] + d * 3 ** i)
+        return s[:5], s[5], [s[4] + (s[4] - s[3]), s[4] + 2 * (s[4] - s[3]), s[5] + d],             f"차이가 {d}, {3 * d}, {9 * d}, …로 3배씩 커집니다."
+    if kind == "cubes":
+        c = rng.choice([-1, 1, 2])
+        s = [n ** 3 + c for n in range(1, 7)]
+        sign = f"+ {c}" if c > 0 else f"− {-c}"
+        return s[:5], s[5], [s[4] + (s[4] - s[3]), 36 + c, s[5] + 1], f"연속한 자연수의 세제곱 {sign} 꼴입니다."
+    # ---- 매우 어려움
+    if kind == "interleaved_mult":
+        a, b, d = rng.randint(1, 3), rng.randint(10, 30), rng.randint(2, 5)
+        s = [a * 2 ** (i // 2) if i % 2 == 0 else b + d * (i // 2) for i in range(9)]
+        return s[:8], s[8], [b + d * 4, s[6] + a * 4, s[8] + a],             f"홀수 번째는 2배씩, 짝수 번째는 {d}씩 커지는 두 수열이 번갈아 나옵니다."
+    if kind == "alt_ops3":
+        while True:
+            a, p, q = rng.randint(2, 6), rng.randint(2, 5), rng.randint(1, 4)
+            s = [a]
+            for i in range(7):
+                s.append([s[-1] + p, s[-1] * 2, s[-1] - q][i % 3])
+            if min(s) > 0:
+                break
+        return s[:7], s[7], [s[6] * 2, s[6] - q, s[7] + 1], f"+{p}, ×2, −{q}를 차례로 반복합니다."
+    if kind == "diff_fib":
+        a = rng.randint(1, 10)
+        s = [a]
+        for d in (1, 1, 2, 3, 5, 8):
+            s.append(s[-1] + d)
+        return s[:6], s[6], [s[5] + 5, s[5] + 7, s[6] + 1], "차이가 1, 1, 2, 3, 5, …로 앞의 두 차이를 더한 값(피보나치)입니다."
+    if kind == "mult_add_var":
+        s = [rng.randint(1, 3)]
+        for i in range(1, 6):
+            s.append(s[-1] * 2 + i)
+        return s[:5], s[5], [s[4] * 2, s[4] * 2 + 4, s[5] + 1], "앞의 수에 2를 곱하고 1, 2, 3, …을 차례로 더합니다."
+    if kind == "diff_squares":
+        a = rng.randint(1, 9)
+        s = [a]
+        for n in range(2, 7):
+            s.append(s[-1] + n * n)
+        return s[:5], s[5], [s[4] + 25, s[4] + 49, s[5] + 1], "차이가 4, 9, 16, 25, …로 연속한 제곱수입니다."
+    if kind == "factorial_like":
+        a = rng.randint(1, 3)
+        s = [a]
+        for i in range(1, 6):
+            s.append(s[-1] * i)
+        return s[:5], s[5], [s[4] * 4, s[4] * 6, s[4] + 24 * a], "앞의 수에 1, 2, 3, 4, …를 차례로 곱합니다."
     raise ValueError(kind)
 
 
 SERIES_LEVELS = {
     1: ["arith", "arith_down", "geom", "arith", "geom", "arith_down"],
     2: ["second_order", "interleaved", "squares", "fib", "double_diff", "mult_add"],
+    3: ["alt_ops", "products", "fib3", "geom_diff", "cubes", "alt_ops3x"],
+    4: ["interleaved_mult", "alt_ops3", "diff_fib", "mult_add_var", "diff_squares", "factorial_like"],
 }
 
 
@@ -121,10 +187,17 @@ NM_RULES = {
     "square_plus": (lambda a, b: a * a + b, "각 행에서 첫째 수의 제곱에 둘째 수를 더하면 세 번째 수가 됩니다.", (2, 9), (1, 9)),
     "twice_plus": (lambda a, b: 2 * a + b, "각 행에서 첫째 수의 2배에 둘째 수를 더하면 세 번째 수가 됩니다.", (2, 20), (1, 20)),
     "diff_triple": (lambda a, b: (a - b) * 3, "각 행에서 두 수의 차에 3을 곱하면 세 번째 수가 됩니다.", (10, 30), (1, 9)),
+    "sq_sum": (lambda a, b: a * a + b * b, "각 행에서 두 수를 각각 제곱해 더하면 세 번째 수가 됩니다.", (1, 9), (1, 9)),
+    "sq_diff": (lambda a, b: a * a - b * b, "각 행에서 첫째 수의 제곱에서 둘째 수의 제곱을 빼면 세 번째 수가 됩니다.",
+                (5, 12), (1, 4)),
+    "ab_plus": (lambda a, b: a * b + a + b, "각 행에서 두 수의 곱에 두 수를 모두 더하면 세 번째 수가 됩니다.", (2, 9), (2, 9)),
+    "diff_sq": (lambda a, b: (a - b) ** 2, "각 행에서 두 수의 차를 제곱하면 세 번째 수가 됩니다.", (10, 20), (1, 9)),
+    "sum_sq": (lambda a, b: (a + b) ** 2, "각 행에서 두 수의 합을 제곱하면 세 번째 수가 됩니다.", (1, 6), (1, 6)),
 }
 NM_LEVELS = {
     2: ["sum", "diff", "prod", "twice_plus", "sum", "prod"],
     3: ["double_sum", "prod_minus", "square_plus", "diff_triple", "twice_plus", "prod_minus"],
+    4: ["sq_sum", "sq_diff", "ab_plus", "diff_sq", "sum_sq", "sq_sum"],
 }
 
 
@@ -179,6 +252,20 @@ OPS = {
     "ab-a": (lambda a, b: a * b - a, "두 수를 곱하고 앞 수를 뺀"),
     "a+b+ab": (lambda a, b: a + b + a * b, "두 수의 합에 두 수의 곱을 더한"),
     "3a-b": (lambda a, b: 3 * a - b, "앞 수의 3배에서 뒤 수를 뺀"),
+    "a+2b": (lambda a, b: a + 2 * b, "앞 수에 뒤 수의 2배를 더한"),
+    "a+b+3": (lambda a, b: a + b + 3, "두 수를 더하고 3을 더한"),
+    "a+b-1": (lambda a, b: a + b - 1, "두 수를 더하고 1을 뺀"),
+    "3a+b": (lambda a, b: 3 * a + b, "앞 수의 3배에 뒤 수를 더한"),
+    "a2+b2": (lambda a, b: a * a + b * b, "두 수를 각각 제곱해 더한"),
+    "a2-ab": (lambda a, b: a * a - a * b, "앞 수의 제곱에서 두 수의 곱을 뺀"),
+    "2ab-b": (lambda a, b: 2 * a * b - b, "두 수의 곱의 2배에서 뒤 수를 뺀"),
+    "(a-b)2": (lambda a, b: (a - b) ** 2, "두 수의 차를 제곱한"),
+    "ab+b2": (lambda a, b: a * b + b * b, "두 수의 곱에 뒤 수의 제곱을 더한"),
+}
+OP_LEVELS = {
+    1: ["a+2b", "a+b+3", "a+b-1", "3a+b", "2a+b", "a+2b"],
+    2: ["ab+1", "a2-b", "2(a+b)", "a+b2", "ab-a", "3a-b"],
+    3: ["a2+b2", "a2-ab", "2ab-b", "(a-b)2", "ab+b2", "a+b+ab"],
 }
 SYMBOLS = ["★", "◆", "♣", "▲", "●", "◎"]
 
@@ -186,7 +273,7 @@ SYMBOLS = ["★", "◆", "♣", "▲", "●", "◎"]
 def operator_item(item: Item) -> Item:
     spec = item.svg
     rng = random.Random(spec["seed"])
-    name = pick_variant(spec, list(OPS))
+    name = pick_variant(spec, OP_LEVELS[spec.get("level", 2)])
     f, why = OPS[name]
     sym = SYMBOLS[spec.get("form", 0) % len(SYMBOLS)]
     while True:
@@ -208,6 +295,8 @@ def operator_item(item: Item) -> Item:
 # ---------------------------------------------------------------- 자료 해석
 
 STORES = ["가", "나", "다", "라"]
+DATA_LEVELS = {1: ["total", "max_diff", "average", "total", "max_diff", "average"],
+               2: ["max_rate", "min_rate", "share", "max_rate", "share", "min_rate"]}
 
 
 def _table_svg(header: list[str], rows: list[list]) -> str:
@@ -228,7 +317,7 @@ def _table_svg(header: list[str], rows: list[list]) -> str:
 def data_item(item: Item) -> Item:
     spec = item.svg
     rng = random.Random(spec["seed"])
-    kind = pick_variant(spec, ["max_rate", "total", "max_diff", "average", "min_rate", "share"])
+    kind = pick_variant(spec, DATA_LEVELS[spec.get("level", 2)])
     while True:
         jan = [rng.randrange(40, 160, 10) for _ in STORES]
         feb = [j + rng.randrange(-30, 70, 10) for j in jan]
