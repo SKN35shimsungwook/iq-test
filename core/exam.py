@@ -10,21 +10,17 @@ import random
 import time
 
 from core import scoring
-from core.schema import BLUEPRINT, Domain, Item, ItemFormat, Mode
+from core.schema import (BLUEPRINT, DEEP_MAX_ITEMS, DEEP_MIN_ITEMS, DEEP_SEC_PER_ITEM, DEEP_TARGET_SE,
+                         Domain, Item, ItemFormat, Mode)
 
 SYMBOLS = ["◆", "▲", "●", "■", "★", "✚", "◐", "♥", "☾"]
 EXPIRY_SLACK_SEC = 1.0  # 브라우저 타이머가 서버보다 조금 먼저 끝나는 차이를 흡수
 ABORTED_GS = json.dumps({"correct": 0, "wrong": 0, "aborted": True})  # 진행 중 새로고침한 처리속도 블록
 
 
-def new_exam(form: dict, mode: Mode) -> dict:
-    """form: item_bank.build_form 결과 (영역 → DomainForm)."""
+def _base(domains: list[str], mode: Mode) -> dict:
     return {
-        "domains": [d.value for d in form],
-        "items": {d.value: [it.id for it in f.stage1] for d, f in form.items()},  # 지금까지 확정된 출제 순서
-        "panels": {d.value: {p: [it.id for it in its] for p, its in f.panels.items()} for d, f in form.items()},
-        "stage1_n": {d.value: len(f.stage1) for d, f in form.items()},
-        "path": {},        # domain → 2단계 묶음 (easy | mid | hard)
+        "domains": domains,
         "d": 0,            # 현재 영역 인덱스
         "stage": "intro",  # intro | items
         "i": 0,            # 현재 문항 인덱스
@@ -36,45 +32,82 @@ def new_exam(form: dict, mode: Mode) -> dict:
         "started": [],     # 제시가 시작된 작업기억·처리속도 문항 (새로고침 재시청 방지)
         "raw": {},         # domain → 원점수
         "mode": mode.value,
+        "kind": "round",   # round (1·2·3차) | deep (심층검사)
     }
+
+
+def new_exam(form: dict[Domain, list[Item]], mode: Mode) -> dict:
+    """1·2·3차 검사. form: item_bank.build_form 결과 (영역 → 고정 구성 문항)."""
+    exam = _base([d.value for d in form], mode)
+    exam["items"] = {d.value: [it.id for it in items] for d, items in form.items()}
+    return exam
+
+
+# ---------------------------------------------------------------- 심층검사 (컴퓨터 맞춤형 검사)
+
+def new_deep_exam(prior_rows: list[dict], seen: set[str], mode: Mode) -> dict:
+    """1~3차 응답을 출발점으로, 영역마다 실력에 가장 정보가 많은 문항을 하나씩 골라 낸다.
+
+    prior_rows: 앞 차수들의 응답 행 (item_id, domain, correct, score)
+    seen: 앞 차수에서 본 문항 ID (다시 내지 않는다. 작업기억은 자극이 매번 새로 정해지므로 예외)
+    """
+    domains = [d.value for d in BLUEPRINT if d is not Domain.GS]
+    exam = _base(domains, mode)
+    exam["kind"] = "deep"
+    exam["items"] = {d: [] for d in domains}
+    exam["prior"] = {d: [{k: r[k] for k in ("item_id", "domain", "correct", "score")}
+                         for r in prior_rows if r["domain"] == d] for d in domains}
+    exam["seen"] = sorted(seen)
+    return exam
+
+
+def deep_estimate(exam: dict, items: dict[str, Item], domain: Domain, seed: int) -> tuple[float, float]:
+    """앞 차수 + 지금까지의 심층검사 응답으로 추정한 (θ, 표준오차)."""
+    rows = exam["prior"].get(domain.value, []) + [
+        {"item_id": i, "domain": domain.value, "correct": score_item(items[i], exam["answers"].get(i), seed)[0]}
+        for i in exam["items"][domain.value]]
+    rows = [r for r in rows if r["item_id"] in items]
+    if not rows:
+        return 0.0, 1.0
+    return scoring.eap(scoring._likelihood([items[r["item_id"]] for r in rows], [bool(r["correct"]) for r in rows]))
+
+
+def deep_next(exam: dict, items: dict[str, Item], seed: int) -> str | None:
+    """현재 영역의 다음 심층검사 문항을 골라 붙인다. 목표 정확도나 최대 문항에 닿았으면 None."""
+    d = current_domain(exam)
+    chosen = exam["items"][d.value]
+    theta, se = deep_estimate(exam, items, d, seed)
+    exam.setdefault("estimates", {})[d.value] = [theta, se]
+    if len(chosen) >= DEEP_MAX_ITEMS or (len(chosen) >= DEEP_MIN_ITEMS and se <= DEEP_TARGET_SE):
+        return None
+    seen = set(exam["seen"])
+    reusable = (ItemFormat.DIGIT_SPAN, ItemFormat.SPATIAL_SPAN)
+    cands = [it for it in items.values()
+             if it.domain is d and it.id not in chosen and (it.id not in seen or it.format in reusable)]
+    if not cands:
+        return None
+    ranked = sorted(cands, key=lambda it: (-scoring.information(it, theta), it.id))
+    last = items[chosen[-1]].subtype if chosen else None
+    top = [it for it in ranked[:6] if it.subtype != last] or ranked[:6]
+    pick = random.Random(f"{seed}:{d.value}:{len(chosen)}").choice(top[:3])  # 같은 문항만 반복 노출되지 않게
+    chosen.append(pick.id)
+    return pick.id
+
+
+def domain_time_limit(domain: Domain, mode: Mode, deep: bool = False) -> int:
+    """영역 제한시간(초). 처리속도는 컴포넌트가 직접 시간을 재므로 0."""
+    if domain in (Domain.GS, Domain.GWM):
+        return 0
+    return DEEP_MAX_ITEMS * DEEP_SEC_PER_ITEM if deep else BLUEPRINT[domain].time_for(mode)
 
 
 def current_domain(exam: dict) -> Domain:
     return Domain(exam["domains"][exam["d"]])
 
 
-def domain_time_limit(domain: Domain, mode: Mode) -> int:
-    """영역 제한시간(초). 처리속도는 컴포넌트가 직접 시간을 재므로 0."""
-    return 0 if domain is Domain.GS else BLUEPRINT[domain].time_for(mode)
-
-
-def has_stage2(exam: dict) -> bool:
-    """현재 영역에 아직 고르지 않은 2단계 묶음이 있는가."""
-    d = exam["domains"][exam["d"]]
-    return bool(exam["panels"].get(d)) and d not in exam["path"]
-
-
-def stage_start(exam: dict) -> int:
-    """현재 단계의 첫 문항 인덱스 (2단계로 넘어가면 1단계 문항으로는 돌아갈 수 없다)."""
-    d = exam["domains"][exam["d"]]
-    return exam["stage1_n"][d] if d in exam["path"] else 0
-
-
-def route_domain(exam: dict, items: dict[str, Item], seed: int) -> str:
-    """1단계 응답으로 2단계 묶음을 골라 출제 목록 뒤에 붙인다."""
-    d = exam["domains"][exam["d"]]
-    stage1 = exam["items"][d][: exam["stage1_n"][d]]
-    correct = [score_item(items[i], exam["answers"].get(i), seed)[0] for i in stage1]
-    panel = scoring.route([items[i] for i in stage1], correct)
-    exam["path"][d] = panel
-    exam["items"][d] = stage1 + exam["panels"][d][panel]
-    exam["i"] = len(stage1)
-    return panel
-
-
 def start_domain(exam: dict, mode: Mode, now: float | None = None) -> None:
     now = time.time() if now is None else now
-    limit = domain_time_limit(current_domain(exam), mode)
+    limit = domain_time_limit(current_domain(exam), mode, deep=exam.get("kind") == "deep")
     exam.update(stage="items", i=0, entered=now, deadline=now + limit if limit else None)
 
 

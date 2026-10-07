@@ -62,3 +62,61 @@ def profile_chart(rows: list[dict]) -> alt.LayerChart:
         y=y, x=alt.X("지수:Q", scale=x_scale), text=alt.Text("지수:Q", format=".0f"))
     mean = alt.Chart(pd.DataFrame({"x": [100]})).mark_rule(color=MUTED, strokeDash=[4, 4]).encode(x="x:Q")
     return (mean + band + dot + label).properties(height=44 * len(df) + 30).configure_view(stroke=None)
+
+
+def trend_chart(points: list[dict]) -> alt.LayerChart:
+    """차수별 점수(회색)와 누적 합산 점수(기본색)를 90% 범위와 함께. points: 차수, 종류, 지수, 하한, 상한."""
+    df = pd.DataFrame(points)
+    order = list(dict.fromkeys(df["차수"]))
+    color = alt.Color("종류:N", scale=alt.Scale(domain=["차수별", "누적 합산"], range=[MUTED, PRIMARY]),
+                      legend=alt.Legend(orient="top", title=None))
+    x = alt.X("차수:N", sort=order, title=None, axis=alt.Axis(labelAngle=0))
+    off = alt.XOffset("종류:N", sort=["차수별", "누적 합산"])
+    tip = [alt.Tooltip("차수:N"), alt.Tooltip("종류:N"), alt.Tooltip("지수:Q", format=".0f"),
+           alt.Tooltip("범위:N", title="90% 범위")]
+    df["범위"] = df["하한"].round().astype(int).astype(str) + "–" + df["상한"].round().astype(int).astype(str)
+    base = alt.Chart(df)
+    band = base.mark_rule(strokeWidth=5, opacity=0.35, strokeCap="round").encode(
+        x=x, xOffset=off, y=alt.Y("하한:Q", scale=alt.Scale(zero=False), title="IQ (LTR Index)"), y2="상한:Q",
+        color=color, tooltip=tip)
+    dot = base.mark_point(filled=True, size=110, stroke="white", strokeWidth=2).encode(
+        x=x, xOffset=off, y="지수:Q", color=color, tooltip=tip)
+    label = base.mark_text(dy=-14, fontWeight="bold", fontSize=12).encode(
+        x=x, xOffset=off, y="지수:Q", text=alt.Text("지수:Q", format=".0f"), color=color)
+    mean = alt.Chart(pd.DataFrame({"y": [100]})).mark_rule(color=MUTED, strokeDash=[4, 4]).encode(y="y:Q")
+    return (mean + band + dot + label).properties(height=240).configure_view(stroke=None)
+
+
+def level_chart(by_level: dict[int, tuple[int, int]], labels: dict[int, str]) -> alt.LayerChart:
+    """난이도별 정답률 막대."""
+    df = pd.DataFrame([{"난이도": labels[lv], "정답률": c / n, "맞힘": f"{c}/{n}"} for lv, (c, n) in by_level.items()])
+    order = [labels[lv] for lv in by_level]
+    base = alt.Chart(df).encode(
+        x=alt.X("난이도:N", sort=order, title=None, axis=alt.Axis(labelAngle=0)),
+        tooltip=["난이도", alt.Tooltip("정답률:Q", format=".0%"), alt.Tooltip("맞힘:N", title="맞힌 문항")])
+    bar = base.mark_bar(color=PRIMARY, cornerRadiusTopLeft=4, cornerRadiusTopRight=4, width={"band": 0.6}).encode(
+        y=alt.Y("정답률:Q", scale=alt.Scale(domain=[0, 1]), axis=alt.Axis(format="%"), title="정답률"))
+    text = base.mark_text(dy=-8, color="#374151").encode(y="정답률:Q", text="맞힘:N")
+    half = alt.Chart(pd.DataFrame({"y": [0.5]})).mark_rule(color=MUTED, strokeDash=[4, 4]).encode(y="y:Q")
+    return (bar + text + half).properties(height=200).configure_view(stroke=None)
+
+
+def deep_trace_chart(rows: list[dict]) -> alt.FacetChart:
+    """심층검사에서 문항을 풀 때마다 영역 점수 범위가 좁혀지는 모습 (영역별 작은 그래프)."""
+    df = pd.DataFrame(rows)
+    df["범위"] = df["하한"].round().astype(int).astype(str) + "–" + df["상한"].round().astype(int).astype(str)
+    tip = ["단계", alt.Tooltip("지수:Q", format=".0f"), alt.Tooltip("범위:N", title="90% 범위"), "난이도", "결과"]
+    x = alt.X("단계:O", title="심층검사 문항", axis=alt.Axis(labelAngle=0, labelExpr="datum.value == 0 ? '시작' : datum.value"))
+    base = alt.Chart().encode(x=x)
+    band = base.mark_area(color=PRIMARY, opacity=0.15).encode(
+        y=alt.Y("하한:Q", scale=alt.Scale(zero=False), title="영역 지수"), y2="상한:Q")
+    line = base.mark_line(color=PRIMARY, strokeWidth=2).encode(y="지수:Q")
+    dots = base.mark_point(filled=True, size=70, stroke="white", strokeWidth=1.5).encode(
+        y="지수:Q", tooltip=tip,
+        shape=alt.Shape("결과:N", scale=alt.Scale(domain=["출발", "정답", "오답"], range=["circle", "circle", "cross"]),
+                        legend=alt.Legend(orient="top", title=None)),
+        color=alt.Color("결과:N", scale=alt.Scale(domain=["출발", "정답", "오답"], range=[MUTED, PRIMARY, "#dc2626"]),
+                        legend=alt.Legend(orient="top", title=None)))
+    return alt.layer(band, line, dots, data=df).properties(width=190, height=150).facet(
+        facet=alt.Facet("영역:N", title=None, sort=list(dict.fromkeys(df["영역"]))), columns=3
+    ).resolve_scale(y="independent").configure_view(stroke=None)

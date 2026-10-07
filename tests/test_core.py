@@ -30,33 +30,24 @@ def test_bank_files_are_valid():
 ITEMS = load_items()
 
 
-def _ids(form) -> list[str]:
-    return [it.id for f in form.values() for it in [*f.stage1, *(x for p in f.panels.values() for x in p)]]
-
-
-def test_build_form_follows_plan_and_is_deterministic():
+def test_build_form_follows_fixed_plan_and_is_deterministic():
     for mode in Mode:
         f1, f2 = build_form(ITEMS, 1, mode), build_form(ITEMS, 1, mode)
-        assert _ids(f1) == _ids(f2)
+        assert {d: [i.id for i in v] for d, v in f1.items()} == {d: [i.id for i in v] for d, v in f2.items()}
         for domain, form in f1.items():
-            plan = BLUEPRINT[domain].plan_for(mode)
-            assert [it.slot for it in form.stage1] == list(plan.stage1)
-            for name, slots in plan.panels.items():
-                assert [it.slot for it in form.panels[name]] == list(slots)
-        ids = _ids(f1)
-        assert len(ids) == len(set(ids))  # 한 라운드 안에서 같은 문항이 두 번 뽑히지 않음
+            assert [it.slot for it in form] == list(BLUEPRINT[domain].form_for(mode))
 
 
-def test_extra_rounds_never_repeat_shown_items():
-    """3라운드까지, 앞 라운드에서 실제로 본 문항(1단계 + 고른 묶음)은 다시 나오지 않는다."""
+def test_rounds_never_repeat_items():
+    """1·2·3차는 같은 구성이지만 앞 차수에서 본 4지선다 문항은 다시 나오지 않는다."""
     for mode in Mode:
-        for start in range(20):
+        for start in range(30):
             seen: set[str] = set()
             for r in range(3):
                 form = build_form(ITEMS, start * 10 + r, mode, exclude=seen)
-                shown = [it.id for f in form.values() for it in f.path(("easy", "mid", "hard")[r]) if f.panels or True]
-                assert not set(shown) & seen, (mode, start, r)
-                seen |= {i for i in shown if not i.startswith(("gwm", "gs"))}
+                shown = {it.id for v in form.values() for it in v if it.format is ItemFormat.MCQ}
+                assert not shown & seen, (mode, start, r)
+                seen |= shown
 
 
 def test_session_roundtrip_and_first_attempt_flag():
@@ -79,33 +70,17 @@ def test_session_roundtrip_and_first_attempt_flag():
     assert {r["item_id"] for r in rows} == {"gf-01a", "gf-02a"}
 
 
-def test_blueprint_paths_and_lengths():
+def test_blueprint_fixed_forms():
     assert validate_blueprint() == []
     for domain, spec in BLUEPRINT.items():
         if domain is Domain.GS:
-            assert spec.plan_for(Mode.QUICK) is None and spec.length_for(Mode.FULL) == 1
+            assert spec.quick == () and spec.length_for(Mode.FULL) == 1
             continue
         assert spec.length_for(Mode.QUICK) == 4
         assert spec.length_for(Mode.FULL) == (10 if domain is Domain.GF else 8)
-        assert set(spec.full.panels) == {"easy", "mid", "hard"}
-        # 어려운 묶음일수록 평균 난이도가 높다
-        lv = {p: sum(SLOTS[s].difficulty for s in slots) / len(slots) for p, slots in spec.full.panels.items()}
-        assert lv["easy"] < lv["mid"] < lv["hard"]
-
-
-def test_route_uses_ability_estimate():
-    from core import scoring as sc
-
-    def pick(level: int) -> Item:
-        return next(it for it in ITEMS if it.slot == f"gf-matrix-{level}")
-    two = [pick(2), pick(2)]
-    assert sc.route(two, [False, False]) == "easy"
-    assert sc.route(two, [True, True]) == "hard"
-    # 같은 문항이면 더 많이 맞힐수록 같거나 높은 묶음으로 간다
-    order = {"easy": 0, "mid": 1, "hard": 2}
-    four = [pick(2), pick(2), pick(3), pick(3)]
-    levels = [order[sc.route(four, [k > i for i in range(4)])] for k in range(5)]
-    assert levels == sorted(levels) and levels[0] == 0 and levels[-1] == 2
+        assert set(spec.form_for(Mode.FULL)) <= set(spec.pool)
+        levels = [SLOTS[s].difficulty for s in spec.full]
+        assert levels[0] == 1 and levels[-1] == 4  # 쉬운 문제로 시작해 매우 어려운 문제로 끝난다
 
 
 def test_generated_forms_use_different_rules():

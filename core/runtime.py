@@ -48,8 +48,8 @@ def init_state() -> None:
     ss.setdefault("session_id", None)  # 검사 시작 시 DB 세션 ID
     ss.setdefault("mode", None)        # Mode.QUICK | Mode.FULL
     ss.setdefault("form_seed", None)
-    ss.setdefault("series_id", None)   # 추가 라운드 묶음 ID (1라운드 세션 ID)
-    ss.setdefault("round", 1)
+    ss.setdefault("series_id", None)   # 차수 묶음 ID (1차 세션 ID)
+    ss.setdefault("round", 1)        # 1~3차, 4 = 심층검사
     ss.setdefault("phase", "intro")    # intro → test → result
     if ss.session_id is None and "s" in st.query_params:
         _resume(st.query_params["s"])

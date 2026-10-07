@@ -11,14 +11,7 @@ ITEMS = load_items()
 BY_ID = {it.id: it for it in ITEMS}
 
 
-def paths(form, panel="mid"):
-    """build_form 결과 → 영역별로 실제 풀게 될 문항 목록 (1단계 + 묶음)."""
-    return {d: f.path(panel if f.panels else None) for d, f in form.items()}
-
-
 def rows_for(form, correct_fn, gs_score=40.0):
-    if form and not isinstance(next(iter(form.values())), list):
-        form = paths(form)
     rows = []
     for d, items in form.items():
         for k, it in enumerate(items):
@@ -43,9 +36,8 @@ def test_scores_are_monotonic_and_bounded(mode):
 
 def test_guess_like_pattern_scores_lower_than_consistent_pattern():
     """같은 개수를 맞혀도, 쉬운 문항을 틀리고 어려운 문항만 맞힌 응답은 찍기로 보고 낮게 추정한다 (3모수 모형)."""
-    form = build_form(ITEMS, 5, Mode.FULL)
-    gf = {Domain.GF: form[Domain.GF].path("mid")}
-    # 중간 경로: 1단계 보통 5문항 + 어려움 5문항
+    gf = {Domain.GF: [next(i for i in ITEMS if i.slot == s) for s in
+                      ("gf-matrix-2", "gf-analogy-2", "gf-matrix-3", "gf-transform-3")]}
     easy = sc.estimate(rows_for(gf, lambda it, k: it.difficulty == 2), BY_ID)[0][Domain.GF]
     hard = sc.estimate(rows_for(gf, lambda it, k: it.difficulty == 3), BY_ID)[0][Domain.GF]
     assert easy.raw == hard.raw

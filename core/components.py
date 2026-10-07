@@ -95,7 +95,10 @@ export default function (component) {
   tick()
   if (!s.timer) s.timer = setInterval(tick, 250)
   if (!s.onVis) {
-    s.onVis = () => { if (document.hidden) { s.blurs += 1; setStateValue("blurs", s.blurs) } }
+    s.onVis = () => {
+      if (!box.isConnected) { document.removeEventListener("visibilitychange", s.onVis); return }
+      if (document.hidden) { s.blurs += 1; setStateValue("blurs", s.blurs) }
+    }
     document.addEventListener("visibilitychange", s.onVis)
   }
   return () => {
@@ -155,14 +158,19 @@ export default function (component) {
     (t) => t.classList.toggle("on", Number(t.dataset.i) === sel))
   const pick = (i) => { mark(i); setStateValue("selected", i) }
   mark(data.selected ?? -1)
+  // 키보드 리스너는 문서 전체에 붙으므로 인스턴스마다 하나만 두고, 화면에서 사라진 뒤에는 반응하지 않게 한다
+  // (남아 있으면 작업기억 키패드에서 1~4를 누를 때 엉뚱한 재실행이 일어나 답이 사라질 수 있다)
+  if (parentElement.__onKey) document.removeEventListener("keydown", parentElement.__onKey)
   const onKey = (e) => {
+    if (!grid.isConnected) { document.removeEventListener("keydown", onKey); return }
     if (e.target.closest && e.target.closest("input, textarea")) return
     const k = e.key.toUpperCase()
     const i = "1234".indexOf(k) >= 0 ? "1234".indexOf(k) : "ABCD".indexOf(k)
     if (i >= 0 && k.length === 1) pick(i)
   }
+  parentElement.__onKey = onKey
   document.addEventListener("keydown", onKey)
-  return () => document.removeEventListener("keydown", onKey)
+  return () => { document.removeEventListener("keydown", onKey); parentElement.__onKey = null }
 }
 """,
 )
@@ -250,6 +258,7 @@ export default function (component) {
     setTriggerValue("done", { answer: typed, rt_ms: Math.round(performance.now() - t0) })
   }
   const onKey = (e) => {
+    if (!root.isConnected) { document.removeEventListener("keydown", onKey); return }
     if (!root.querySelector(".pad")) return
     if (/^[0-9]$/.test(e.key)) press(e.key)
     else if (e.key === "Backspace") press("←")
@@ -462,7 +471,10 @@ export default function (component) {
     screen("끝났습니다. 잠시만 기다려 주세요.", false)
     setTriggerValue("done", { correct, wrong })
   }
-  const onKey = (e) => { if (/^[1-9]$/.test(e.key)) answer(Number(e.key)) }
+  const onKey = (e) => {
+    if (!root.isConnected) { document.removeEventListener("keydown", onKey); return }
+    if (/^[1-9]$/.test(e.key)) answer(Number(e.key))
+  }
   document.addEventListener("keydown", onKey)
   intro()
   return () => { clearInterval(timer); document.removeEventListener("keydown", onKey) }

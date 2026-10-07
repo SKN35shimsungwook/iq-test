@@ -71,7 +71,7 @@ try:
     step("진행 상태 읽기", load)
     step("완료 기록", lambda: db.complete_session(engine, sid, {"gf": 0}, {"gf": 90.0}, 90.0, 25.0,
                                                  thetas={"total": -0.6, "gf": -0.6}, focus_lost=0))
-    step("라운드·본 문항 조회", lambda: (db.series_sessions(engine, sid), db.seen_items(engine, sid)))
+    step("차수·본 문항 조회", lambda: (db.series_sessions(engine, sid), db.seen_items(engine, sid)))
     step("규준 조회", lambda: db.norm_thetas(engine, "quick"))
 
     def frames():

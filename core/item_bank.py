@@ -11,7 +11,7 @@ import random
 import string
 import zlib
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from pathlib import Path
 
 from core.figures import materialize
@@ -115,25 +115,27 @@ def validate_bank(items: list[Item]) -> list[str]:
 def validate_blueprint() -> list[str]:
     """구성표 규칙.
 
-    - 경로(1단계 + 묶음)마다 같은 유형은 MAX_SAME_TYPE번 이하
-    - 빠른 검사 경로는 모두 다른 유형
-    - 한 계획 안의 경로 길이는 모두 같음 (묶음에 따라 문항 수가 달라지지 않게)
+    - 고정 구성의 슬롯은 모두 그 영역의 풀에 있고, 쉬운 문제부터 놓인다
+    - 정밀: 같은 유형 최대 MAX_SAME_TYPE번 / 빠른: 난이도 1~4 하나씩, 모두 다른 유형
     """
     errors = []
     for domain, spec in BLUEPRINT.items():
         for mode in Mode:
-            plan = spec.plan_for(mode)
-            if plan is None:
+            form = spec.form_for(mode)
+            if not form:
                 continue
-            paths = plan.paths()
-            if len({len(p) for p in paths.values()}) > 1:
-                errors.append(f"[{domain.value}/{mode.value}] 경로 길이가 다름")
-            for name, path in paths.items():
-                counts = Counter(SLOTS[x].subtype for x in path)
-                limit = 1 if mode is Mode.QUICK else MAX_SAME_TYPE
-                errors += [f"[{domain.value}/{mode.value}/{name}] {t} {n}회" for t, n in counts.items() if n > limit]
-                if len(set(path)) != len(path):
-                    errors.append(f"[{domain.value}/{mode.value}/{name}] 같은 슬롯이 한 경로에 두 번")
+            tag = f"[{domain.value}/{mode.value}]"
+            errors += [f"{tag} 풀에 없는 슬롯 {x}" for x in form if x not in spec.pool]
+            levels = [SLOTS[x].difficulty for x in form]
+            if levels != sorted(levels):
+                errors.append(f"{tag} 쉬운 문제부터 놓이지 않음 {levels}")
+            counts = Counter(SLOTS[x].subtype for x in form)
+            limit = 1 if mode is Mode.QUICK else MAX_SAME_TYPE
+            errors += [f"{tag} {t} {n}회" for t, n in counts.items() if n > limit]
+            if mode is Mode.QUICK and domain is not Domain.GS and sorted(levels) != [1, 2, 3, 4]:
+                errors.append(f"{tag} 빠른 검사 난이도가 1~4 하나씩이 아님 {levels}")
+            if len(set(form)) != len(form):
+                errors.append(f"{tag} 같은 슬롯이 두 번")
     return errors
 
 
@@ -144,44 +146,24 @@ def items_by_slot(items: list[Item]) -> dict[str, list[Item]]:
     return out
 
 
-@dataclass
-class DomainForm:
-    """한 영역의 검사지: 1단계 문항과, 정답률에 따라 이어질 묶음 후보 셋."""
-    stage1: list[Item]
-    panels: dict[str, list[Item]] = field(default_factory=dict)
-
-    def path(self, panel: str | None) -> list[Item]:
-        return self.stage1 + (self.panels.get(panel, []) if panel else [])
-
-
 def build_form(items: list[Item], seed: int, mode: Mode = Mode.FULL,
-               exclude: set[str] | frozenset[str] = frozenset()) -> dict[Domain, DomainForm]:
-    """시드로 슬롯마다 동형 문항을 골라 검사지를 만든다.
+               exclude: set[str] | frozenset[str] = frozenset()) -> dict[Domain, list[Item]]:
+    """시드로 슬롯마다 동형 문항을 골라 1·2·3차 검사지를 만든다 (구성은 모두 같고 문항만 다름).
 
-    - exclude: 앞 라운드에서 이미 본 문항 ID (추가 라운드가 겹치지 않게)
-    - 한 라운드 안에서도 같은 문항이 두 번 뽑히지 않는다
+    - exclude: 앞 차수에서 이미 본 문항 ID (차수끼리 겹치지 않게)
     - 문항이 없는 슬롯은 건너뛴다 (개발 중 부분 문항은행 허용)
     """
     rng = random.Random(seed)
     pool = items_by_slot(items)
-    taken = set(exclude)
-
-    def draw(slot_ids) -> list[Item]:
-        out = []
-        for sid in slot_ids:
-            cands = [it for it in pool.get(sid, []) if it.id not in taken]
-            if not cands:  # 동형을 다 썼으면 (라운드가 너무 많을 때) 본 문항도 허용
-                cands = [it for it in pool.get(sid, []) if it.id not in {o.id for o in out}]
-            if cands:
-                pick = rng.choice(sorted(cands, key=lambda it: it.id))
-                taken.add(pick.id)
-                out.append(pick)
-        return out
-
     form = {}
     for domain, spec in BLUEPRINT.items():
-        plan = spec.plan_for(mode)
-        if plan is None:
+        slots = spec.form_for(mode)
+        if not slots:
             continue
-        form[domain] = DomainForm(draw(plan.stage1), {p: draw(sl) for p, sl in plan.panels.items()})
+        picked = []
+        for sid in slots:
+            cands = [it for it in pool.get(sid, []) if it.id not in exclude] or pool.get(sid, [])
+            if cands:
+                picked.append(rng.choice(sorted(cands, key=lambda it: it.id)))
+        form[domain] = picked
     return form

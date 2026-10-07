@@ -10,7 +10,7 @@ from core import analysis as an
 from core import db
 from core.charts import PRIMARY
 from core.runtime import get_engine, get_items
-from core.schema import BLUEPRINT, MODE_LABELS, Mode
+from core.schema import BLUEPRINT, DEEP_MAX_ITEMS, DEEP_MIN_ITEMS, DEEP_TARGET_SE, MODE_LABELS, Mode
 
 st.set_page_config(layout="wide")  # 분석 표가 넓어 이 페이지만 넓게
 
@@ -94,7 +94,7 @@ if not done.empty:
     ).properties(height=220)
     st.altair_chart(hist)
 
-items_tab, rel_tab, flow_tab, export_tab = st.tabs(["문항 분석", "신뢰도", "응시 흐름", "내보내기"])
+items_tab, rel_tab, flow_tab, export_tab = st.tabs(["문항 분석", "신뢰도", "차수·심층검사", "내보내기"])
 if responses.empty:
     st.stop()
 r_mode = responses if mode == "all" else responses[responses["mode"] == mode]
@@ -148,33 +148,27 @@ with rel_tab:
             "평균 표준오차(지수)": st.column_config.NumberColumn(format="±%.1f"),
         })
     r_alt, n_alt = an.alternate_forms(sessions)
-    st.metric("동형 검사 신뢰도 (1·2라운드 상관)", "–" if math.isnan(r_alt) else f"{r_alt:.2f}",
+    st.metric("동형 검사 신뢰도 (1·2차 상관)", "–" if math.isnan(r_alt) else f"{r_alt:.2f}",
               f"{n_alt}명", delta_color="off", border=True,
               help="같은 사람이 겹치지 않는 문제로 두 번 푼 점수의 상관. 연습 효과가 섞여 있으니 참고용입니다.")
 
 # ---------------------------------------------------------------- 응시 흐름
 
 with flow_tab:
-    route = an.routing(sessions)
-    if route.empty:
-        st.info("완료한 검사가 없습니다.")
+    st.markdown("**차수별 진행**")
+    st.caption("1차만 하고 끝낸 사람, 2·3차 검증까지 한 사람, 심층검사까지 마친 사람의 수입니다.")
+    st.dataframe(an.round_usage(sessions), hide_index=True)
+    st.markdown("**심층검사**")
+    deep_df = an.deep_usage(sessions)
+    if deep_df.empty:
+        st.info("심층검사를 마친 기록이 아직 없습니다.")
     else:
-        st.caption("1단계 결과로 2단계 묶음이 어디로 갔는지. 응시자 능력이 정규분포라면 대략 쉬운 30% · 중간 40% · "
-                   "어려운 30% 근처가 정상이고, 한쪽으로 크게 쏠리면 1단계 문항 난이도 가정을 점검합니다.")
-        chart = alt.Chart(route).mark_bar(cornerRadiusEnd=3).encode(
-            y=alt.Y("영역:N", title=None, sort=[spec.label for spec in BLUEPRINT.values()]),
-            x=alt.X("비율:Q", stack="normalize", axis=alt.Axis(format="%"), title=None),
-            color=alt.Color("묶음:N", sort=["쉬운", "중간", "어려운"],
-                            scale=alt.Scale(domain=["쉬운", "중간", "어려운"], range=["#c7d2fe", "#818cf8", "#4338ca"]),
-                            legend=alt.Legend(orient="top", title=None)),
-            order=alt.Order("묶음:N", sort="ascending"),
-            tooltip=["영역", "묶음", alt.Tooltip("수:Q", title="응시 수"), alt.Tooltip("비율:Q", format=".0%")],
-        ).properties(height=40 * route["영역"].nunique() + 40)
-        st.altair_chart(chart)
-    rounds = sessions[sessions["completed"]].groupby("series_id")["round"].max().value_counts().sort_index()
-    st.markdown("**추가 라운드 이용**")
-    st.dataframe(pd.DataFrame({"라운드 수": [f"{k}라운드까지" for k in rounds.index], "응시자": rounds.values}),
-                 hide_index=True)
+        st.caption(f"영역마다 오차가 ±{15 * DEEP_TARGET_SE:.0f}점 안쪽이 되면 끝납니다 (최소 {DEEP_MIN_ITEMS} · 최대 "
+                   f"{DEEP_MAX_ITEMS}문항). 평균 문항 수가 최대에 가까우면 그 영역의 문항 풀에 실력대에 맞는 문항이 부족하다는 뜻입니다.")
+        st.dataframe(deep_df, hide_index=True, column_config={
+            "평균 문항 수": st.column_config.NumberColumn(format="%.1f"),
+            "평균 최종 오차(지수)": st.column_config.NumberColumn(format="±%.1f"),
+        })
 
 # ---------------------------------------------------------------- 내보내기
 

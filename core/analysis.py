@@ -16,7 +16,7 @@ from sqlalchemy.engine import Engine
 from core import db
 from core import exam as ex
 from core import scoring as sc
-from core.schema import BLUEPRINT, DIFFICULTY_LABELS, Domain, Item, ItemFormat
+from core.schema import BLUEPRINT, DEEP_ROUND, DIFFICULTY_LABELS, Domain, Item, ItemFormat, round_label
 
 MIN_N = 30          # 문항 판정에 필요한 최소 응답 수
 SIM_VERSION = "sim"  # 시뮬레이션 데이터 표시
@@ -119,7 +119,7 @@ def domain_reliability(responses: pd.DataFrame, items: dict[str, Item]) -> pd.Da
 
 
 def alternate_forms(sessions: pd.DataFrame) -> tuple[float, int]:
-    """같은 사람이 겹치지 않는 문제로 푼 1·2라운드 종합 θ의 상관 (동형 검사 신뢰도)."""
+    """같은 사람이 겹치지 않는 문제로 푼 1·2차 종합 θ의 상관 (동형 검사 신뢰도)."""
     done = sessions[sessions["completed"] & sessions["theta"].notna()]
     r1 = done[done["round"] == 1].set_index("series_id")["theta"]
     r2 = done[done["round"] == 2].set_index("series_id")["theta"]
@@ -129,17 +129,30 @@ def alternate_forms(sessions: pd.DataFrame) -> tuple[float, int]:
     return float(pair.corr().iloc[0, 1]), len(pair)
 
 
-def routing(sessions: pd.DataFrame) -> pd.DataFrame:
-    """영역별로 2단계 묶음이 어디로 갔는지 비율."""
+def deep_usage(sessions: pd.DataFrame) -> pd.DataFrame:
+    """심층검사에서 영역마다 몇 문항으로 끝났고, 마지막 오차가 얼마였는지."""
     rows = []
-    for prog in sessions.loc[sessions["completed"], "progress"]:
-        for d, panel in ((prog or {}).get("path") or {}).items():
-            rows.append({"영역": BLUEPRINT[Domain(d)].label, "묶음": {"easy": "쉬운", "mid": "중간", "hard": "어려운"}[panel]})
+    done = sessions[sessions["completed"] & (sessions["round"] == DEEP_ROUND)]
+    for prog in done["progress"]:
+        prog = prog or {}
+        for d, ids in (prog.get("items") or {}).items():
+            est = (prog.get("estimates") or {}).get(d)
+            rows.append({"영역": BLUEPRINT[Domain(d)].label, "문항 수": len(ids),
+                         "최종 오차(지수)": 15 * est[1] if est else np.nan})
     if not rows:
-        return pd.DataFrame(columns=["영역", "묶음", "비율"])
-    df = pd.DataFrame(rows).value_counts().rename("수").reset_index()
-    df["비율"] = df["수"] / df.groupby("영역")["수"].transform("sum")
-    return df
+        return pd.DataFrame(columns=["영역", "응시", "평균 문항 수", "평균 최종 오차(지수)"])
+    df = pd.DataFrame(rows)
+    return df.groupby("영역", sort=False).agg(**{"응시": ("문항 수", "size"), "평균 문항 수": ("문항 수", "mean"),
+                                               "평균 최종 오차(지수)": ("최종 오차(지수)", "mean")}).reset_index()
+
+
+def round_usage(sessions: pd.DataFrame) -> pd.DataFrame:
+    """묶음(같은 사람)마다 어디까지 했는지: 1차만 / 2차까지 / 3차까지 / 심층검사까지."""
+    done = sessions[sessions["completed"]]
+    if done.empty:
+        return pd.DataFrame(columns=["진행", "응시자"])
+    last = done.groupby("series_id")["round"].max().value_counts().sort_index()
+    return pd.DataFrame({"진행": [f"{round_label(k)}까지" for k in last.index], "응시자": last.values})
 
 
 def calibrate(responses: pd.DataFrame, items: dict[str, Item], min_n: int = 50) -> dict[str, dict]:

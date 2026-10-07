@@ -24,7 +24,7 @@ from core import exam as ex  # noqa: E402
 from core import scoring as sc  # noqa: E402
 from core.analysis import SIM_VERSION  # noqa: E402
 from core.item_bank import build_form, load_items  # noqa: E402
-from core.schema import Domain, ItemFormat, Mode  # noqa: E402
+from core.schema import DEEP_ROUND, Domain, ItemFormat, Mode  # noqa: E402
 
 sys.stdout.reconfigure(encoding="utf-8")
 ap = argparse.ArgumentParser()
@@ -78,7 +78,17 @@ def answer(item_id: str, theta: float, seed: int) -> str:
     return expected if ok else ""
 
 
-def run_round(theta: float, mode: Mode, client: str, series: str | None, round_no: int, seen: set) -> tuple[str, set]:
+def finish(sid: str, state: dict, seed: int, rows: list[dict]) -> None:
+    per, total = sc.estimate(rows, items)
+    db.save_progress(engine, sid, state)
+    db.complete_session(engine, sid, {d.value: e.raw for d, e in per.items()},
+                        {d.value: round(e.index, 1) for d, e in per.items()}, round(total.index, 1),
+                        round(sc.percentile(total.theta), 1),
+                        thetas={"total": total.theta, **{d.value: e.theta for d, e in per.items()}},
+                        focus_lost=rng.choice([0, 0, 0, 1, 2]))
+
+
+def run_round(theta: float, mode: Mode, client: str, series: str | None, round_no: int, seen: set):
     seed = rng.randrange(2**31)
     sid = db.start_session(engine, client, mode.value, seed, SIM_VERSION, series_id=series, round_no=round_no)
     state = ex.new_exam(build_form(items_list, seed, mode, exclude=seen), mode)
@@ -88,33 +98,45 @@ def run_round(theta: float, mode: Mode, client: str, series: str | None, round_n
         for iid in state["items"][d.value]:
             state["answers"][iid] = answer(iid, theta, seed)
             state["ms"][iid] = int(rng.lognormvariate(8.8 + 0.25 * items[iid].difficulty, 0.4))  # 약 9~19초
-        if ex.has_stage2(state):
-            ex.route_domain(state, items, seed)
-            for iid in state["items"][d.value][state["stage1_n"][d.value]:]:
-                state["answers"][iid] = answer(iid, theta, seed)
-                state["ms"][iid] = int(rng.lognormvariate(8.8 + 0.25 * items[iid].difficulty, 0.4))
         rows = ex.domain_rows(state, items, d, seed)
         db.save_responses(engine, sid, rows)
         all_rows += rows
         ex.finish_domain(state, rows)
-    per, total = sc.estimate(all_rows, items)
-    db.save_progress(engine, sid, state)
-    db.complete_session(engine, sid, {d.value: e.raw for d, e in per.items()},
-                        {d.value: round(e.index, 1) for d, e in per.items()}, round(total.index, 1),
-                        round(sc.percentile(total.theta), 1),
-                        thetas={"total": total.theta, **{d.value: e.theta for d, e in per.items()}},
-                        focus_lost=rng.choice([0, 0, 0, 1, 2]))
-    return sid, {r["item_id"] for r in all_rows}
+    finish(sid, state, seed, all_rows)
+    return sid, {r["item_id"] for r in all_rows}, all_rows
 
 
-thetas = []
+def run_deep(theta: float, mode: Mode, client: str, series: str, seen: set, prior: list[dict]) -> None:
+    seed = rng.randrange(2**31)
+    sid = db.start_session(engine, client, mode.value, seed, SIM_VERSION, series_id=series, round_no=DEEP_ROUND)
+    state = ex.new_deep_exam(prior, seen, mode)
+    all_rows = []
+    while state["d"] < len(state["domains"]):
+        d = ex.current_domain(state)
+        while (iid := ex.deep_next(state, items, seed)) is not None:
+            state["answers"][iid] = answer(iid, theta, seed)
+            state["ms"][iid] = int(rng.lognormvariate(8.8 + 0.25 * items[iid].difficulty, 0.4))
+        rows = ex.domain_rows(state, items, d, seed)
+        db.save_responses(engine, sid, rows)
+        all_rows += rows
+        ex.finish_domain(state, rows)
+    finish(sid, state, seed, all_rows)
+
+
 for i in range(args.n):
     theta = rng.gauss(0, 1)
     mode = Mode.QUICK if rng.random() < 0.6 else Mode.FULL
-    sid, seen = run_round(theta, mode, f"sim-{i}", None, 1, set())
-    thetas.append(theta)
-    if rng.random() < 0.3:  # 30%는 2라운드까지
-        run_round(theta + 0.1, mode, f"sim-{i}", sid, 2, seen)
+    series, seen, prior = None, set(), []
+    for r in range(1, 4):  # 1차는 모두, 2차 40%, 3차는 그중 70%
+        if r == 2 and rng.random() > 0.4 or r == 3 and rng.random() > 0.7:
+            break
+        sid, shown, rows = run_round(theta + 0.05 * (r - 1), mode, f"sim-{i}", series, r, seen)
+        series = series or sid
+        seen |= shown
+        prior += rows
+    else:
+        if rng.random() < 0.8:  # 3차까지 한 사람의 80%가 심층검사
+            run_deep(theta, mode, f"sim-{i}", series, seen, prior)
     if (i + 1) % 50 == 0:
         print(f"  {i + 1}/{args.n}명")
 

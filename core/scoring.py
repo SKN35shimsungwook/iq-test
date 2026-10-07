@@ -83,16 +83,11 @@ class Estimate:
         return to_index(self.theta)
 
 
-ROUTE_CUT = 0.5  # 1단계 θ가 −0.5 미만이면 쉬운 묶음, 0.5 초과면 어려운 묶음 (시뮬레이션상 약 33/42/25%)
-
-
-def route(items: list[Item], correct: list[bool]) -> str:
-    """1단계 응답으로 θ를 추정해 2단계 묶음을 고른다.
-
-    정답 개수만 세면 문항 난이도를 무시해 잘하는 쪽으로 너무 많이 보내므로(약 47%) 능력 추정치를 쓴다.
-    """
-    theta, _ = eap(_likelihood(items, correct))
-    return "easy" if theta < -ROUTE_CUT else "hard" if theta > ROUTE_CUT else "mid"
+def information(item: Item, theta: float) -> float:
+    """3모수 문항 정보량 I(θ). 심층검사는 지금 추정한 θ에서 이 값이 가장 큰 문항을 고른다."""
+    a, b, c = item_params(item)
+    p = c + (1 - c) / (1 + math.exp(-D * a * (theta - b)))
+    return (D * a) ** 2 * ((p - c) ** 2 / (1 - c) ** 2) * ((1 - p) / p)
 
 
 def to_index(z: float) -> float:

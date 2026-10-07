@@ -20,7 +20,7 @@ sessions = sa.Table(
     sa.Column("id", sa.String(36), primary_key=True),
     sa.Column("client_id", sa.String(36), nullable=False, index=True),  # 익명 브라우저 ID
     sa.Column("mode", sa.String(8), nullable=False),  # quick | full (규준은 모드별로 따로)
-    sa.Column("series_id", sa.String(36), index=True),  # 같은 사람이 이어서 푼 라운드 묶음 (1라운드 세션 ID)
+    sa.Column("series_id", sa.String(36), index=True),  # 같은 사람이 이어서 푼 차수 묶음 (1차 세션 ID). round: 1~3차, 4 = 심층검사
     sa.Column("round", sa.Integer, nullable=False, server_default="1"),
     sa.Column("is_first_attempt", sa.Boolean, nullable=False),
     sa.Column("form_seed", sa.Integer, nullable=False),
@@ -163,7 +163,7 @@ def norm_raw_scores(engine: Engine, mode: str) -> list[dict]:
 
 
 def series_sessions(engine: Engine, series_id: str) -> list[dict]:
-    """같은 라운드 묶음의 세션들 (라운드 순)."""
+    """같은 묶음의 세션들 (차수 순)."""
     with engine.connect() as conn:
         rows = conn.execute(sa.select(sessions).where(sessions.c.series_id == series_id)
                             .order_by(sessions.c.round)).all()
@@ -171,14 +171,14 @@ def series_sessions(engine: Engine, series_id: str) -> list[dict]:
 
 
 def seen_items(engine: Engine, series_id: str) -> set[str]:
-    """라운드 묶음에서 이미 출제된 문항 ID (추가 라운드가 겹치지 않게)."""
+    """묶음에서 이미 출제된 문항 ID (뒤 차수·심층검사가 겹치지 않게)."""
     q = sa.select(responses.c.item_id).join(sessions, sessions.c.id == responses.c.session_id)         .where(sessions.c.series_id == series_id)
     with engine.connect() as conn:
         return {r.item_id for r in conn.execute(q)}
 
 
 def norm_thetas(engine: Engine, mode: str, exclude: str | None = None) -> list[dict]:
-    """실제 규준 계산용: 해당 모드에서 완료된 첫 응시(1라운드) 세션들의 능력 추정치."""
+    """실제 규준 계산용: 해당 모드에서 완료된 첫 응시(1차 검증) 세션들의 능력 추정치."""
     q = sa.select(sessions.c.thetas).where(
         sessions.c.mode == mode,
         sessions.c.round == 1,
