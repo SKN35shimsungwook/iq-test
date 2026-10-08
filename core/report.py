@@ -32,14 +32,19 @@ class Score:
         return (self.hi - self.lo) / 2
 
 
-def scale(theta: float, se: float, norm: sc.Norm, domain: Domain | None = None) -> Score:
-    z = norm.z(theta, domain)
-    sd = norm.sd if (domain is None and norm.empirical) else \
-        (norm.domain or {}).get(domain.value, (0, 1))[1] if (domain is not None and norm.empirical) else 1.0
+def stage(n_rounds: int, deep: bool = False) -> str:
+    """시뮬레이션 규준의 단계 이름: 1차만 "1", 1~2차 "1-2", 1~3차 "1-3", 심층검사까지 "1-3+deep"."""
+    base = "1" if n_rounds <= 1 else f"1-{min(n_rounds, 3)}"
+    return f"{base}+deep" if deep else base
+
+
+def scale(theta: float, se: float, norm: sc.Norm, domain: Domain | None = None, stage: str | None = None) -> Score:
+    """θ̂·SE → IQ 척도. 90% 범위는 θ̂ ± 1.645·SE의 양 끝을 같은 기준으로 옮겨 구한다."""
+    z = norm.z(theta, domain, stage)
     index = sc.to_index(z)
-    se_pts = 15 * se / sd
-    return Score(theta, se, index, max(index - sc.CI_Z * se_pts, 40), min(index + sc.CI_Z * se_pts, 160),
-                 sc.percentile(z))
+    lo = sc.to_index(norm.z(theta - sc.CI_Z * se, domain, stage))
+    hi = sc.to_index(norm.z(theta + sc.CI_Z * se, domain, stage))
+    return Score(theta, se, index, min(lo, index), max(hi, index), sc.percentile(z))
 
 
 @dataclass
@@ -98,7 +103,8 @@ class RoundReport:
     blurs: int = 0
 
 
-def report(rows: list[dict], items: dict[str, Item], norm: sc.Norm, rd: RoundData | None = None) -> RoundReport:
+def report(rows: list[dict], items: dict[str, Item], norm: sc.Norm, rd: RoundData | None = None,
+           stage: str | None = None) -> RoundReport:
     per, total = sc.estimate(rows, items)
     domains = []
     for d in sc.DOMAIN_ORDER:
@@ -107,7 +113,7 @@ def report(rows: list[dict], items: dict[str, Item], norm: sc.Norm, rd: RoundDat
         drows = [r for r in rows if r["domain"] == d.value]
         secs = [r["response_ms"] / 1000 for r in drows if r.get("response_ms")]
         domains.append(DomainResult(
-            d, scale(per[d].theta, per[d].se, norm, d),
+            d, scale(per[d].theta, per[d].se, norm, d, stage),
             correct=sum(1 for r in drows if r["correct"]), n=len(drows), raw=per[d].raw,
             avg_sec=float(np.mean(secs)) if secs and d is not Domain.GS else None))
     by_level: dict[int, list[int]] = {}
@@ -123,7 +129,7 @@ def report(rows: list[dict], items: dict[str, Item], norm: sc.Norm, rd: RoundDat
     if rd and rd.started_at and rd.completed_at:
         minutes = (rd.completed_at - rd.started_at).total_seconds() / 60
     return RoundReport(
-        total=scale(total.theta, total.se, norm), domains=domains,
+        total=scale(total.theta, total.se, norm, stage=stage), domains=domains,
         by_level={k: (v[0], v[1]) for k, v in sorted(by_level.items())},
         correct=sum(1 for r in scored if r["correct"]), n=len(scored), minutes=minutes,
         quick_wrong=quick_wrong, blurs=(rd.progress.get("blurs", 0) if rd else 0))
@@ -147,12 +153,13 @@ def level_comment(by_level: dict[int, tuple[int, int]]) -> str:
 
 def cumulative(rounds: list[RoundData], items: dict[str, Item], norm: sc.Norm) -> list[tuple[str, Score]]:
     """1차 → 1~2차 → … 처럼 차수를 하나씩 더할 때마다의 점수와 범위."""
-    out, acc = [], []
+    out, acc, n = [], [], 0
     for rd in rounds:
         acc += rd.rows
+        n += not rd.deep
         _, total = sc.estimate(acc, items)
         label = rd.label if len(out) == 0 else f"+ {rd.label}"
-        out.append((label, scale(total.theta, total.se, norm)))
+        out.append((label, scale(total.theta, total.se, norm, stage=stage(n, rd.deep))))
     return out
 
 
@@ -168,7 +175,7 @@ def deep_trace(prior_rows: list[dict], deep_rows: list[dict], items: dict[str, I
             use = prior + drows[:k]
             like = sc._likelihood([items[r["item_id"]] for r in use], [bool(r["correct"]) for r in use])
             theta, se = sc.eap(like)
-            s = scale(theta, se, norm, d)
+            s = scale(theta, se, norm, d, "1-3+deep" if k else "1-3")
             row = {"영역": BLUEPRINT[d].label, "단계": k, "지수": s.index, "하한": s.lo, "상한": s.hi}
             if k:
                 it = items[drows[k - 1]["item_id"]]

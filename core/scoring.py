@@ -6,13 +6,18 @@
     나중에 파일럿 데이터로 보정한 irt_a/b/c가 문항에 있으면 그 값을 쓴다.
   - 처리속도: 점수를 가정 평균·표준편차로 표준화한 뒤 신뢰도 0.8의 정규 측정 모형으로 θ에 반영한다.
   - θ는 표준정규 사전분포를 둔 EAP(사후 평균)로 추정하고, 사후 표준편차를 표준오차로 쓴다.
+실제 응시자가 적을 때는 봇 시뮬레이션 규준(norms/sim_norms.json, scripts/build_sim_norms.py)으로
+"같은 단계(1차 / 1~2차 / 1~3차 / +심층)를 마친 가상 응시자 중 위치"를 구해 IQ로 바꾼다.
 같은 모드의 첫 응시가 MIN_NORM_N명 이상 쌓이면(2단계) 실제 응시자 분포로 다시 표준화한다.
 """
 
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from statistics import NormalDist
 
 import numpy as np
@@ -27,6 +32,7 @@ GRID = np.linspace(-4, 4, 161)
 PRIOR = np.exp(-GRID ** 2 / 2)
 NORMAL = NormalDist()
 CI_Z = 1.645  # 90% 신뢰구간
+SIM_NORMS = Path(__file__).resolve().parent.parent / "norms" / "sim_norms.json"
 
 DOMAIN_ORDER = [Domain.GF, Domain.GC, Domain.GQ, Domain.GV, Domain.GWM, Domain.GS]
 ABILITY_TEXT = {
@@ -126,20 +132,80 @@ def estimate(rows: list[dict], items: dict[str, Item]) -> tuple[dict[Domain, Est
     return per_domain, Estimate(*eap(total_like), raw=total_raw, n_items=total_n)
 
 
+@lru_cache(maxsize=1)
+def _sim_file() -> dict | None:
+    try:
+        return json.loads(SIM_NORMS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def load_sim(mode: str) -> "SimTable | None":
+    """봇 시뮬레이션 규준표 (모드별). 파일이 없으면 None → 가정 규준(θ 그대로)."""
+    data = _sim_file()
+    if not data or mode not in data.get("modes", {}):
+        return None
+    return SimTable(np.asarray(data["quantile_probs"], dtype=float), data["modes"][mode], int(data["n_per_mode"]))
+
+
+class SimTable:
+    """같은 단계를 마친 봇들의 θ̂ 분포로 θ̂ → z.
+
+    종합: 분위수표로 백분위를 구해 z = Φ⁻¹(백분위) (동백분위 등화).
+    영역: 문항이 4~10개라 θ̂가 몇 개 값으로만 나와 백분위가 들쭉날쭉하므로 봇 분포의 평균·표준편차로 표준화 (선형 등화).
+    """
+
+    EDGE, BAND = 0.02, 0.10  # 양 끝 2% 바깥은 만점·0점이 몰려 표가 들쭉날쭉 → 2~10%(90~98%) 기울기로 이어 늘린다
+
+    def __init__(self, probs: np.ndarray, table: dict, n: int):
+        keep = (probs >= self.EDGE - 1e-9) & (probs <= 1 - self.EDGE + 1e-9)
+        self.zs = np.array([NORMAL.inv_cdf(float(p)) for p in probs[keep]])
+        self.band = int(np.searchsorted(probs[keep], self.BAND))
+        self.total = {stage: np.maximum.accumulate(np.asarray(keys["total"]["quantiles"], dtype=float)[keep])
+                      for stage, keys in table.items()}
+        self.domain = {stage: {k: (v["mean"], max(v["sd"], 0.1)) for k, v in keys.items() if k != "total"}
+                       for stage, keys in table.items()}
+        self.n = n
+
+    def z(self, theta: float, stage: str, key: str) -> float | None:
+        if key != "total":
+            m = self.domain.get(stage, {}).get(key)
+            return None if m is None else (theta - m[0]) / m[1]
+        q = self.total.get(stage)
+        if q is None:
+            return None
+        zs, b = self.zs, self.band
+        if theta <= q[0]:
+            return float(zs[0] + (theta - q[0]) * (zs[b] - zs[0]) / max(q[b] - q[0], 1e-6))
+        if theta >= q[-1]:
+            return float(zs[-1] + (theta - q[-1]) * (zs[-1] - zs[-1 - b]) / max(q[-1] - q[-1 - b], 1e-6))
+        return float(np.interp(theta, q, zs))
+
+
 @dataclass
 class Norm:
-    """실제 응시자 분포 (θ 척도). 없으면 가정 규준(평균 0, 표준편차 1)."""
+    """점수 기준: 실제 응시자 분포 → 없으면 봇 시뮬레이션 규준 → 그것도 없으면 가정 규준(θ 그대로)."""
     n: int = 0
     mean: float = 0.0
     sd: float = 1.0
     domain: dict | None = None  # domain value → (mean, sd)
+    sim: SimTable | None = None
 
     @property
     def empirical(self) -> bool:
         return self.n >= MIN_NORM_N
 
-    def z(self, theta: float, domain: Domain | None = None) -> float:
+    @property
+    def simulated(self) -> bool:
+        return not self.empirical and self.sim is not None
+
+    def z(self, theta: float, domain: Domain | None = None, stage: str | None = None) -> float:
+        """stage: "1" · "1-2" · "1-3" · "1-3+deep" — 시뮬레이션 규준에서 비교할 단계. None이면 θ 그대로."""
         if not self.empirical:
+            if self.sim is not None and stage is not None:
+                z = self.sim.z(theta, stage, domain.value if domain else "total")
+                if z is not None:
+                    return z
             return theta
         if domain is None:
             return (theta - self.mean) / self.sd
@@ -147,11 +213,11 @@ class Norm:
         return (theta - m) / s
 
 
-def build_norm(thetas: list[dict]) -> Norm:
+def build_norm(thetas: list[dict], sim: SimTable | None = None) -> Norm:
     """저장된 첫 응시들의 θ 기록({"total": θ, "gf": θ, ...}) → Norm."""
     n = len(thetas)
     if n < MIN_NORM_N:
-        return Norm(n=n)
+        return Norm(n=n, sim=sim)
 
     def stats(vals):
         arr = np.asarray(vals, dtype=float)
@@ -163,7 +229,7 @@ def build_norm(thetas: list[dict]) -> Norm:
         vals = [t[d.value] for t in thetas if d.value in t]
         if len(vals) >= MIN_NORM_N:
             domains[d.value] = stats(vals)
-    return Norm(n=n, mean=mean, sd=sd, domain=domains)
+    return Norm(n=n, mean=mean, sd=sd, domain=domains, sim=sim)
 
 
 def strengths_weaknesses(scores: dict[Domain, tuple[float, float]], min_gap: float = 8.0):

@@ -1,5 +1,7 @@
 import math
 
+import numpy as np
+
 import pytest
 
 from core import exam as ex
@@ -88,3 +90,39 @@ def test_estimate_accepts_exam_rows():
     rows = [r for d in form for r in ex.domain_rows(state, BY_ID, d, 2)]
     per, total = sc.estimate(rows, BY_ID)
     assert set(per) == set(form) and total.index < 100
+
+
+# ---------------------------------------------------------------- 봇 시뮬레이션 규준
+
+@pytest.mark.parametrize("mode", ["quick", "full"])
+def test_sim_norm_centered_and_monotonic(mode):
+    sim = sc.load_sim(mode)
+    assert sim is not None and sim.n >= 10000
+    norm = sc.Norm(sim=sim)
+    assert norm.simulated
+    for stage in ("1", "1-2", "1-3", "1-3+deep"):
+        idx = [sc.to_index(norm.z(t, None, stage)) for t in np.linspace(-3, 3, 61)]
+        assert all(b >= a for a, b in zip(idx, idx[1:]))  # 능력이 높을수록 IQ도 높다
+        median = float(np.median(sim.total[stage]))
+        assert sc.to_index(norm.z(median, None, stage)) == pytest.approx(100, abs=1)
+        for d in (Domain.GF, Domain.GC):
+            m, _ = sim.domain[stage][d.value]
+            assert sc.to_index(norm.z(m, d, stage)) == pytest.approx(100, abs=0.1)
+
+
+def test_sim_norm_spreads_compressed_scores():
+    """빠른 검사 1차 영역 점수는 4문항이라 θ̂가 평균 쪽으로 몰린다 → 봇 분포 기준으로 다시 펼친다."""
+    norm = sc.Norm(sim=sc.load_sim("quick"))
+    assert sc.to_index(norm.z(1.0, Domain.GF, "1")) > sc.to_index(1.0) + 5
+
+
+def test_empirical_norm_overrides_sim():
+    thetas = [{"total": t} for t in np.linspace(-1, 1, 200)]
+    norm = sc.build_norm(thetas, sim=sc.load_sim("quick"))
+    assert norm.empirical and not norm.simulated
+    assert norm.z(norm.mean, None, "1") == pytest.approx(0)
+
+
+def test_no_stage_falls_back_to_theta():
+    norm = sc.Norm(sim=sc.load_sim("quick"))
+    assert norm.z(0.7) == 0.7

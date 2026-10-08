@@ -82,3 +82,15 @@ def test_scale_and_levels():
     assert s.index == 100 and round(s.pct) == 50
     assert round(s.margin, 1) == round(sc.CI_Z * 15 * 0.3, 1)
     assert DEEP_ROUND == 4
+
+
+def test_stage_names():
+    assert [rp.stage(n) for n in (1, 2, 3)] == ["1", "1-2", "1-3"]
+    assert rp.stage(3, deep=True) == "1-3+deep"
+
+
+def test_scale_range_contains_index_with_sim_norm():
+    norm = sc.Norm(sim=sc.load_sim("full"))
+    for theta in (-2.5, -0.5, 0, 1.2, 2.8):
+        s = rp.scale(theta, 0.3, norm, stage="1-2")
+        assert 40 <= s.lo <= s.index <= s.hi <= 160

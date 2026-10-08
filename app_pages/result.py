@@ -22,7 +22,7 @@ if ss.phase != "result":
 
 @st.cache_data(ttl=600, max_entries=4)
 def load_norm(mode: str) -> sc.Norm:
-    return sc.build_norm(db.norm_thetas(get_engine(), mode))
+    return sc.build_norm(db.norm_thetas(get_engine(), mode), sim=sc.load_sim(mode))
 
 
 exam, mode, seed = ss.exam, Mode(ss.mode), ss.form_seed
@@ -45,8 +45,10 @@ if not ss.get(f"saved-{ss.session_id}"):
 
 rounds = rp.load_rounds(db.series_sessions(get_engine(), ss.series_id), items)
 all_rows = [r for rd in rounds for r in rd.rows]
-final = rp.report(all_rows, items, norm)
-reports = {rd.round: rp.report(rd.rows, items, norm, rd) for rd in rounds}
+# 점수 기준 단계: 합산은 "같은 차수까지 마친 응시자" 기준, 차수별 점수는 한 차수 분량(1차) 기준
+final_stage = rp.stage(sum(not rd.deep for rd in rounds), any(rd.deep for rd in rounds))
+final = rp.report(all_rows, items, norm, stage=final_stage)
+reports = {rd.round: rp.report(rd.rows, items, norm, rd, stage=None if rd.deep else "1") for rd in rounds}
 
 
 def pct_text(pct: float) -> str:
@@ -78,8 +80,13 @@ with st.container(border=True):
         f"**{s.lo:.0f}~{s.hi:.0f}** 사이에 있으며 (±{s.margin:.0f}점), 같은 검사를 본 사람 {rank_text(s.pct)}에 해당합니다. "
         f"점수는 IQ와 같은 척도(평균 100, 표준편차 15)입니다."
     )
-    basis = (f"이 검사를 처음 응시한 {norm.n:,}명의 실제 분포" if norm.empirical else
-             f"문항 난이도로 만든 가정 기준 (실제 응시자가 {sc.MIN_NORM_N}명을 넘으면 실제 분포로 바뀝니다. 현재 {norm.n}명)")
+    if norm.empirical:
+        basis = f"이 검사를 처음 응시한 {norm.n:,}명의 실제 분포"
+    elif norm.simulated:
+        basis = (f"같은 단계까지 푼 가상 응시자 {norm.sim.n:,}명의 시뮬레이션 분포 (문항 난이도 가정 기반 · "
+                 f"실제 응시자가 {sc.MIN_NORM_N}명을 넘으면 실제 분포로 바뀝니다. 현재 {norm.n}명)")
+    else:
+        basis = f"문항 난이도로 만든 가정 기준 (실제 응시자가 {sc.MIN_NORM_N}명을 넘으면 실제 분포로 바뀝니다. 현재 {norm.n}명)"
     st.caption(f"{len(all_rows)}문항의 응답을 합쳐 계산했습니다 · 점수 기준: {basis}")
     if len(rounds) < MAX_ROUNDS:
         st.caption(f"2·3차 검증과 심층검사를 하면 범위가 더 좁아져 IQ를 더 정확하게 알 수 있습니다 (지금 ±{s.margin:.0f}점).")
