@@ -1,0 +1,154 @@
+{
+  "title": "디지털 인지 평가 시스템 개발을 위한 심리측정학적·기술적·법률적 요건 종합 보고서",
+  "summary": "지능 검사(IQ Test)를 디지털 소프트웨어 형태로 구축하기 위한 심리측정학, 데이터 과학, 소프트웨어 아키텍처, 법률 규제 요건 종합 명세",
+  "sections": [
+    {
+      "id": 1,
+      "title": "심리학적 이론 프레임워크 및 인지 영역 구조화",
+      "theory_model": {
+        "name": "Cattell-Horn-Carroll (CHC) 이론",
+        "description": "Raymond Cattell과 John Horn의 Gf-Gc 모델과 John Carroll의 3계층 요인 분석 이론을 통합한 다차원 위계 구조",
+        "stratums": {
+          "Stratum_III": "일반 지능 요인 (g factor)",
+          "Stratum_II": "8~16개 광범위 인지 능력 (Broad Abilities)",
+          "Stratum_I": "70~80개 이상의 세부 한정 능력 (Narrow Abilities)"
+        }
+      },
+      "broad_abilities": [
+        {
+          "code": "Gf",
+          "name": "유동적 추론 (Fluid Reasoning)",
+          "definition": "신규 문제 상황에서 귀납적·연역적 논리를 적용하는 능력",
+          "tasks": ["행렬 추론(Matrix Reasoning)", "도형 무게 비교(Figure Weights)", "수열 논리"]
+        },
+        {
+          "code": "Gc",
+          "name": "결정적 지능 / 이해-지식 (Comprehension-Knowledge)",
+          "definition": "언어적 지식, 어휘력, 사회적 개념 형성 및 범주화 능력",
+          "tasks": ["어휘 검사", "공통성 찾기(Similarities)", "상식 문제"]
+        },
+        {
+          "code": "Gwm",
+          "name": "작업 기억 (Working Memory)",
+          "definition": "단기 수용 영역 내 정보 유지 및 능동적 조작·재구성 능력",
+          "tasks": ["숫자 외우기(Digit Span)", "문자-숫자 순서 정렬", "산수 과제"]
+        },
+        {
+          "code": "Gv",
+          "name": "시공간 처리 (Visual Processing)",
+          "definition": "시각적 자극 및 공간적 형상의 생성, 저장, 회전, 변형 능력",
+          "tasks": ["토막 짜기(Block Design)", "시각 퍼즐(Visual Puzzles)", "Mental Rotation"]
+        },
+        {
+          "code": "Gs",
+          "name": "처리 속도 (Processing Speed)",
+          "definition": "반복적인 시각적 심볼 과제를 신속·정확하게 수행하는 능력",
+          "tasks": ["기호 쓰기(Coding)", "기호 탐색(Symbol Search)"]
+        },
+        {
+          "code": "Gq",
+          "name": "정량적 추론 (Quantitative Reasoning)",
+          "definition": "수리적 개념 및 데이터 간 논리적 관계 이해 및 과제 해결 능력",
+          "tasks": ["응용 수리 계산", "수치 추론", "수열 규칙 찾기"]
+        }
+      ],
+      "scoring_strategy": {
+        "fsiq": "Full-Scale IQ (전체 지능 지수, 일반 지능 g 추정치)",
+        "index_scores": "CHC 광범위 능력 영역별 세분화된 지수 점수 및 신뢰구간 제공 (다차원 인지 프로파일)"
+      }
+    },
+    {
+      "id": 2,
+      "title": "문항 반응 이론(IRT) 및 컴퓨터 맞춤형 검사(CAT) 엔진 설계",
+      "irt_model": {
+        "type": "3-Parameter Logistic Model (3PL)",
+        "formula": "P_i(theta) = c_i + (1 - c_i) / (1 + exp(-D * a_i * (theta - b_i)))",
+        "parameters": {
+          "theta": "피검자의 잠재적 인지 능력 매개변수 (N(0,1))",
+          "b_i": "문항 난이도 매개변수",
+          "a_i": "문항 변별도 매개변수",
+          "c_i": "추측도 매개변수",
+          "D": "척도 상수 (1.7 또는 1.0)"
+        }
+      },
+      "cat_pipeline": {
+        "item_selection": "Maximum Fisher Information (MFI) 기법",
+        "ability_estimation": [
+          "Expected A Posteriori (EAP)",
+          "Maximum A Posteriori (MAP)",
+          "Maximum Likelihood Estimation (MLE)"
+        ],
+        "termination_criteria": [
+          "SEM <= threshold (예: SEM <= 0.30)",
+          "영역당 최대 문항 수 도달 (예: 20문항)"
+        ]
+      },
+      "frameworks": [
+        {
+          "name": "catsim",
+          "language": "Python",
+          "features": "1PL/2PL/3PL, MFI 선택, EAP/MAP/MLE 추정, FastAPI/Django 최적화"
+        },
+        {
+          "name": "EduCAT",
+          "language": "Python",
+          "features": "Neural-CAT, BOBCAT, MIRT 등 기계학습 기반 CAT"
+        },
+        {
+          "name": "catIrt",
+          "language": "R",
+          "features": "1PL/2PL/3PL, SPRT, GLR, CI 분류 알고리즘 검증"
+        },
+        {
+          "name": "mirtCAT",
+          "language": "R",
+          "features": "다차원 IRT (MIRT) 동시 추정, Shiny GUI 연동"
+        },
+        {
+          "name": "CATQuiz",
+          "language": "PHP",
+          "features": "Moodle Plugin, LMS 환경 IRT 및 Adaptive Quiz 연동"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "IQ 점수 표준화 및 연속 규준(Continuous Norming) 산정 연산",
+      "deviation_iq": {
+        "formula": "IQ = 100 + 15 * ((theta_hat - mu_theta) / sigma_theta)",
+        "scaled_score_formula": "SS = 10 + 3 * ((theta_hat - mu_theta) / sigma_theta)"
+      },
+      "continuous_norming": {
+        "method": "GAMLSS 또는 다항 회귀 모델을 통한 연령별 연속 파라미터 스무딩",
+        "benefit": "연령 경계 구간에서의 경계 불연속성 오차 방지"
+      }
+    },
+    {
+      "id": 4,
+      "title": "프론트엔드/백엔드 아키텍처 및 기술적 UX/UI 인터페이스",
+      "architecture": "Client App - API Gateway/WebSocket - CAT Microservice - Calibrated Item/Norm DB",
+      "key_technical_implementations": {
+        "high_precision_timer": "window.performance.now() API 기반 밀리초/나노초 타이밍 측정",
+        "vector_graphics": "SVG / Canvas 기반 동적 렌더링으로 해상도 독립성 및 타당도 유지",
+        "ux_design": "진행률 지시선, 지시문 카드, 연습 문항(Practice Items) 단계 배치",
+        "security": [
+          "CSS user-select: none",
+          "visibilitychange / blur 이벤트 감지",
+          "Canvas 래스터화 및 노이즈 오버레이를 통한 AI/OCR 방지"
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "title": "저작권 보호 및 개인정보 규제 준수 체계",
+      "copyright": "기존 상용 검사(WAIS, Raven's 등) 무단 복제 금지. 신규 문항 창작 및 독자적 IRT 파라미터 산출 필수.",
+      "privacy_compliance": {
+        "opt_in": "모든 체크박스 초기값 checked=false",
+        "separation": "필수 동의 항목과 선택(마케팅) 동의 항목 시각적 분리",
+        "font_size": "모바일 12px 이상, 데스크톱 14px 이상",
+        "button_text": "'동의합니다' 또는 '위 내용에 동의합니다' 명시",
+        "minor_protection": "만 14세 미만 법정대리인 동의 절차 적용"
+      }
+    }
+  ]
+}

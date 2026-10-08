@@ -1,0 +1,27 @@
+{
+  "title": "디지털 인지 평가 시스템 개발을 위한 심리측정학적·기술적·법률적 요건 종합 보고서",
+  "summary": "지능 검사(IQ Test)를 디지털 소프트웨어 형태로 구축하기 위한 심리측정학, 데이터 과학, 소프트웨어 아키텍처, 법률 규제 요건 종합 명세",
+  "sections": [
+    {
+      "id": 1,
+      "title": "심리학적 이론 프레임워크 및 인지 영역 구조화",
+      "theory_model": {
+        "name": "Cattell-Horn-Carroll (CHC) 이론",
+        "stratums": {
+          "Stratum_III": "일반 지능 요인 (g factor)",
+          "Stratum_II": "8~16개 광범위 인지 능력 (Broad Abilities)",
+          "Stratum_I": "70~80개 이상의 세부 한정 능력 (Narrow Abilities)"
+        }
+      },
+      "broad_abilities": [
+        {"code": "Gf", "name": "유동적 추론", "tasks": ["행렬 추론", "도형 무게 비교", "수열 논리"]},
+        {"code": "Gc", "name": "결정적 지능", "tasks": ["어휘 검사", "공통성 찾기", "상식 문제"]},
+        {"code": "Gwm", "name": "작업 기억", "tasks": ["숫자 외우기", "문자-숫자 순서 정렬", "산수 과제"]},
+        {"code": "Gv", "name": "시공간 처리", "tasks": ["토막 짜기", "시각 퍼즐", "Mental Rotation"]},
+        {"code": "Gs", "name": "처리 속도", "tasks": ["기호 쓰기", "기호 탐색"]},
+        {"code": "Gq", "name": "정량적 추론", "tasks": ["응용 수리 계산", "수치 추론", "수열 규칙 찾기"]}
+      ]
+    },
+    ...
+  ]
+}
