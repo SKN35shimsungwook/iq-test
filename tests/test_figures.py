@@ -51,3 +51,42 @@ def test_cube_fold_finds_opposite_faces():
 def test_paper_fold_unfolds_symmetrically():
     assert gen_spatial._unfold({(3, 0)}, ["L"]) == {(3, 0), (0, 0)}
     assert gen_spatial._unfold({(3, 3)}, ["L", "T"]) == {(3, 3), (0, 3), (3, 0), (0, 0)}
+
+
+def test_number_rules_have_single_answer():
+    """수 행렬·연산 기호: 예시에 맞는 어떤 그럴듯한 규칙으로 풀어도 답이 하나이고, 그 답이 보기에 있다.
+
+    (예시 두 줄이 모두 '첫째 = 둘째'라 a²+b와 a×(b+1)이 구별되지 않던 문제의 재발 방지)
+    """
+    from core.gen_numeric import NM_RULES, OPS, unambiguous
+
+    entries = [e for e in GENERATED if e["generator"] in ("number_matrix", "operator")]
+    items = expand_generated([{**e, "forms": 26} for e in entries])
+    for it in items:
+        p = it.params
+        examples, query = [tuple(x) for x in p["examples"]], tuple(p["query"])
+        f = (NM_RULES[p["rule"]][0] if it.svg["generator"] == "number_matrix" else OPS[p["rule"]][0])
+        assert all(a != b for a, b in examples + [query]), it.id
+        assert unambiguous(f, examples, query), it.id
+        assert f(*query) == p["value"] == int(str(it.choices[it.answer]).replace(",", "")), it.id
+
+
+def test_series_have_single_answer():
+    """수열: 보여 준 항을 설명하는 다른 그럴듯한 규칙(다항식·점화식·교대 연산·홀짝 갈래·차이/비율 규칙)이
+    모두 같은 다음 수를 예측한다. 규칙 종류(난이도)는 그대로 두고 숫자만 다시 뽑아 맞춘다."""
+    from fractions import Fraction
+
+    from core.gen_numeric import series_predictions
+
+    entries = [e for e in GENERATED if e["generator"] == "series"]
+    for it in expand_generated([{**e, "forms": 26} for e in entries]):
+        p = it.params
+        assert series_predictions(p["shown"]) <= {Fraction(p["value"])}, (it.id, p["shown"])
+        assert int(str(it.choices[it.answer]).replace(",", "")) == p["value"]
+
+
+def test_series_checker_catches_ambiguity():
+    from core.gen_numeric import series_predictions
+
+    # 1, 2, 4, 7, 11 은 '차이가 1씩 증가'(→16)로 풀리므로, 의도한 답이 다른 값이면 걸러져야 한다
+    assert 16 in series_predictions([1, 2, 4, 7, 11])

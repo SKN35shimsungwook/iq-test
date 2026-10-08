@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import random
+from fractions import Fraction
 from dataclasses import replace
 
 from core.figures import _svg, pick_variant
@@ -165,14 +166,114 @@ SERIES_LEVELS = {
 }
 
 
+def _poly_next(seq: list[Fraction], max_deg: int = 3) -> Fraction | None:
+    """k차 차분이 일정하면(k차 다항식) 다음 항. 확인용 값이 최소 2개 남는 차수까지만 본다."""
+    rows = [list(seq)]
+    for _ in range(max_deg):
+        rows.append([b - a for a, b in zip(rows[-1], rows[-1][1:])])
+        if len(rows[-1]) >= 2 and len(set(rows[-1])) == 1:
+            nxt = rows[-1][-1]
+            for r in reversed(rows[:-1]):
+                nxt = r[-1] + nxt
+            return nxt
+    return None
+
+
+def _linear_rec_next(seq: list[Fraction]) -> set[Fraction]:
+    """앞 항으로 만드는 점화식들: a(n+1) = p·a(n) + q, a(n+2) = p·a(n+1) + q·a(n) (+ r)."""
+    out = set()
+    n = len(seq)
+    if n >= 4 and seq[1] != seq[0]:  # 1차: 미지수 2개, 나머지 항으로 확인
+        p_ = (seq[2] - seq[1]) / (seq[1] - seq[0])
+        q_ = seq[1] - p_ * seq[0]
+        if all(seq[i + 1] == p_ * seq[i] + q_ for i in range(n - 1)):
+            out.add(p_ * seq[-1] + q_)
+    for with_r in (False, True):  # 2차 (상수항 포함은 6항 이상일 때만 확인 가능)
+        need = 3 if with_r else 2
+        if n < 2 + need + 1:
+            continue
+        # a(i+2) = p a(i+1) + q a(i) + r 를 처음 need개 식으로 푼다
+        import numpy as _np
+        A = [[float(seq[i + 1]), float(seq[i])] + ([1.0] if with_r else []) for i in range(need)]
+        y = [float(seq[i + 2]) for i in range(need)]
+        try:
+            sol = _np.linalg.solve(_np.array(A), _np.array(y))
+        except _np.linalg.LinAlgError:
+            continue
+        coef = [Fraction(x).limit_denominator(50) for x in sol]
+        pp, qq, rr = coef[0], coef[1], (coef[2] if with_r else Fraction(0))
+        if all(seq[i + 2] == pp * seq[i + 1] + qq * seq[i] + rr for i in range(n - 2)):
+            out.add(pp * seq[-1] + qq * seq[-2] + rr)
+    return out
+
+
+def _periodic_ops_next(seq: list[Fraction]) -> set[Fraction]:
+    """연산이 주기적으로 바뀌는 수열 (+p, ×m 번갈아 / 세 연산 반복)."""
+    out = set()
+    for period in (2, 3):
+        if len(seq) < 2 * period + 1:
+            continue
+        ops = []
+        for k in range(period):
+            pairs = [(seq[i], seq[i + 1]) for i in range(k, len(seq) - 1, period)]
+            adds = {b - a for a, b in pairs}
+            muls = {b / a for a, b in pairs if a != 0} if all(a != 0 for a, _ in pairs) else set()
+            if len(adds) == 1 and len(pairs) >= 2:
+                ops.append(("+", adds.pop()))
+            elif len(muls) == 1 and len(pairs) >= 2:
+                ops.append(("*", muls.pop()))
+            else:
+                break
+        if len(ops) == period:
+            op, v = ops[(len(seq) - 1) % period]
+            out.add(seq[-1] + v if op == "+" else seq[-1] * v)
+    return out
+
+
+def _interleaved_next(seq: list[Fraction]) -> set[Fraction]:
+    """홀수 번째·짝수 번째가 따로 가는 수열 (각각 등차 또는 등비)."""
+    if len(seq) < 6:
+        return set()
+    sub = seq[len(seq) % 2::2]  # 다음 항과 같은 갈래
+    out = set()
+    if (n := _poly_next(sub, 1)) is not None:
+        out.add(n)
+    if all(x != 0 for x in sub[:-1]) and len({b / a for a, b in zip(sub, sub[1:])}) == 1:
+        out.add(sub[-1] * sub[-1] / sub[-2])
+    return out
+
+
+def series_predictions(shown: list[int]) -> set[Fraction]:
+    """보여 준 항을 모두 설명하는 '그럴듯한 다른 규칙'들이 예측하는 다음 수 모음."""
+    seq = [Fraction(x) for x in shown]
+    preds = set(_linear_rec_next(seq)) | _periodic_ops_next(seq) | _interleaved_next(seq)
+    if (n := _poly_next(seq)) is not None:
+        preds.add(n)
+    diffs = [b - a for a, b in zip(seq, seq[1:])]  # 차이 수열이 다시 규칙을 이루는 경우
+    for d in ({_poly_next(diffs)} | _linear_rec_next(diffs)) - {None}:
+        preds.add(seq[-1] + d)
+    if all(x != 0 for x in seq):  # 비율 수열이 규칙을 이루는 경우 (계승형 등)
+        ratios = [b / a for a, b in zip(seq, seq[1:])]
+        if (r := _poly_next(ratios, 1)) is not None:
+            preds.add(seq[-1] * r)
+    return preds
+
+
 def series_item(item: Item) -> Item:
     spec = item.svg
     rng = random.Random(spec["seed"])
     kind = pick_variant(spec, SERIES_LEVELS[spec["level"]])
-    shown, ans, wrong, why = _series(kind, rng)
+    for _ in range(500):
+        # 규칙(난이도)은 그대로 두고, 보여 줄 숫자가 다른 규칙으로도 설명되어 답이 갈리면 숫자만 다시 뽑는다
+        shown, ans, wrong, why = _series(kind, rng)
+        if series_predictions(shown) <= {Fraction(ans)}:
+            break
+    else:
+        raise RuntimeError(f"[{item.id}] 답이 하나인 수열을 만들지 못함 ({kind})")
     choices, idx = _options(ans, wrong, rng)
     return replace(item, prompt=f"{', '.join(map(str, shown))}, ( )", choices=choices, answer=idx,
-                   explanation=f"{why} 따라서 다음 수는 {ans:,}입니다.", params={**item.params, "rule": kind})
+                   explanation=f"{why} 따라서 다음 수는 {ans:,}입니다.",
+                   params={**item.params, "rule": kind, "shown": shown, "value": ans})
 
 
 # ---------------------------------------------------------------- 수 행렬
@@ -201,9 +302,54 @@ NM_LEVELS = {
 }
 
 
+def _rival_family() -> list:
+    """예시 행이 '다른 그럴듯한 규칙'으로도 설명되는지 검사할 때 쓰는 규칙 모음.
+
+    출제용 규칙만 비교하면 a×(b+1)처럼 목록에 없는 규칙으로도 풀리는 문제를 걸러내지 못한다.
+    """
+    fam = []
+    for p in (-1, 0, 1, 2):
+        for q in (-1, 0, 1, 2):
+            for r in range(-3, 4):
+                fam.append(lambda a, b, p=p, q=q, r=r: a * b + p * a + q * b + r)      # ab + pa + qb + r
+    for p in range(-2, 3):
+        for r in range(-3, 4):
+            fam.append(lambda a, b, p=p, r=r: a * a + p * b + r)                     # a² + pb + r
+            fam.append(lambda a, b, p=p, r=r: b * b + p * a + r)                     # b² + pa + r
+    for p in range(-2, 3):
+        for q in range(-2, 3):
+            fam.append(lambda a, b, p=p, q=q: (a + p) * (b + q))                     # (a+p)(b+q)
+    for p in range(0, 4):
+        for q in range(-3, 4):
+            for r in range(-5, 6):
+                fam.append(lambda a, b, p=p, q=q, r=r: p * a + q * b + r)            # 일차식
+    for k in range(1, 5):
+        for r in range(-3, 4):
+            fam.append(lambda a, b, k=k, r=r: (a + b) * k + r)
+            fam.append(lambda a, b, k=k, r=r: (a - b) * k + r)
+    fam += [lambda a, b: a * a + b * b, lambda a, b: a * a - b * b, lambda a, b: (a + b) ** 2,
+            lambda a, b: (a - b) ** 2, lambda a, b: a ** 3 - b, lambda a, b: a * b * 2]
+    return fam
+
+
+RIVALS = _rival_family()
+
+
+def unambiguous(f, examples: list[tuple[int, int]], query: tuple[int, int], extra=()) -> bool:
+    """예시에 들어맞는 모든 규칙이 질문에도 같은 답을 내는가. 두 수가 같은 예시는 규칙 구별을 막으므로 금지."""
+    if any(a == b for a, b in examples + [query]):
+        return False
+    answer = f(*query)
+    for g in [*RIVALS, *extra]:
+        if all(g(a, b) == f(a, b) for a, b in examples) and g(*query) != answer:
+            return False
+    return True
+
+
 def _number_grid_svg(rows: list[list]) -> str:
     cell, gap = 72, 6
     size = 3 * cell + 2 * gap
+    height = len(rows) * cell + (len(rows) - 1) * gap
     body = ""
     for r, row in enumerate(rows):
         for c, v in enumerate(row):
@@ -213,7 +359,7 @@ def _number_grid_svg(rows: list[list]) -> str:
                      f'stroke="#6b7280" stroke-width="1.5"{dash}/>'
                      f'<text x="{x + cell / 2}" y="{y + cell / 2 + 10}" text-anchor="middle" font-size="28" '
                      f'font-family="sans-serif" font-weight="600" fill="#111827">{v}</text>')
-    return _svg(size, size, body)
+    return _svg(size, height, body)
 
 
 def number_matrix_item(item: Item) -> Item:
@@ -221,24 +367,22 @@ def number_matrix_item(item: Item) -> Item:
     rng = random.Random(spec["seed"])
     name = pick_variant(spec, NM_LEVELS[spec["level"]])
     f, why, ra, rb = NM_RULES[name]
-    while True:
-        pairs = [(rng.randint(*ra), rng.randint(*rb)) for _ in range(3)]
+    library = [g for g, *_ in NM_RULES.values()]
+    while True:  # 예시 3행 + 질문 1행. 예시에 맞는 다른 규칙이 다른 답을 내면 다시 뽑는다
+        pairs = [(rng.randint(*ra), rng.randint(*rb)) for _ in range(4)]
         vals = [f(a, b) for a, b in pairs]
-        # 다른 규칙으로도 앞의 두 행이 설명되면 모호하므로 다시 뽑는다
-        rivals = [g for n, (g, *_) in NM_RULES.items() if n != name
-                  and all(g(a, b) == v for (a, b), v in zip(pairs[:2], vals[:2]))]
-        if len(set(pairs)) == 3 and all(v > 0 for v in vals) and not rivals:
+        if len(set(pairs)) == 4 and all(v > 0 for v in vals) and unambiguous(f, pairs[:3], pairs[3], library):
             break
     rows = [[a, b, v] for (a, b), v in zip(pairs, vals)]
-    ans = rows[2][2]
-    a, b = pairs[2]
-    rows[2][2] = "?"
+    ans = rows[3][2]
+    a, b = pairs[3]
+    rows[3][2] = "?"
     wrong = [g(a, b) for n, (g, *_) in NM_RULES.items() if n != name]
     wrong = sorted({w for w in wrong if 0 < w != ans}, key=lambda w: abs(w - ans))
     choices, idx = _options(ans, wrong, rng)
     return replace(item, stem_svg=_number_grid_svg(rows), choices=choices, answer=idx,
                    explanation=f"{why} 따라서 {a}, {b} 다음에는 {josa(ans, '이/가')} 들어갑니다.",
-                   params={**item.params, "rule": name})
+                   params={**item.params, "rule": name, "examples": pairs[:3], "query": pairs[3], "value": ans})
 
 
 # ---------------------------------------------------------------- 연산 기호 추론
@@ -279,9 +423,8 @@ def operator_item(item: Item) -> Item:
     while True:
         ex = [(rng.randint(2, 7), rng.randint(1, 6)) for _ in range(3)]
         q = (rng.randint(3, 8), rng.randint(2, 6))
-        consistent = [g for g, _ in OPS.values() if all(g(a, b) == f(a, b) for a, b in ex)]
-        answers = {g(*q) for g in consistent}
-        if len(set(ex + [q])) == 4 and len(answers) == 1 and f(*q) > 0:
+        library = [g for g, _ in OPS.values()]
+        if len(set(ex + [q])) == 4 and f(*q) > 0 and unambiguous(f, ex, q, library):
             break
     ans = f(*q)
     wrong = sorted({g(*q) for g, _ in OPS.values()} - {ans}, key=lambda w: abs(w - ans))
@@ -289,7 +432,7 @@ def operator_item(item: Item) -> Item:
     lines = "  ".join(f"{a} {sym} {b} = {f(a, b)}" for a, b in ex)
     return replace(item, prompt=f"{lines}\n\n그렇다면 {q[0]} {sym} {q[1]} = ( )", choices=choices, answer=idx,
                    explanation=f"{sym}는 {why} 값입니다. 따라서 {q[0]} {sym} {q[1]} = {ans:,}입니다.",
-                   params={**item.params, "rule": name})
+                   params={**item.params, "rule": name, "examples": ex, "query": q, "value": ans})
 
 
 # ---------------------------------------------------------------- 자료 해석
